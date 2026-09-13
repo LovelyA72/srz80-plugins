@@ -77,13 +77,7 @@ function(srz80_plugin name)
   endif()
 endfunction()
 
-set(SRZ80_CARD_DIRECTORIES
-  ram rom mmu_memory fake_cpu z80 w65c816 video lcd1602 vdp tone adpcm dac
-  ym2413 ymf262 ymw258 gbapu sid seta_x1_010 uart_console keyboard midi
-  patchbay floppy riscv)
-foreach(card IN LISTS SRZ80_CARD_DIRECTORIES)
-  add_subdirectory("plugins/cards/${card}")
-endforeach()
+add_subdirectory(plugins/cards)
 
 if(SRZ80_BUILD_TOOLS)
   FetchContent_Declare(SDL3 URL https://www.libsdl.org/release/SDL3-3.4.0.tar.gz
@@ -108,11 +102,7 @@ if(SRZ80_BUILD_TOOLS)
   target_link_libraries(srz80_imgui PUBLIC SDL3::SDL3)
   set_target_properties(srz80_imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-  set(SRZ80_TOOL_DIRECTORIES z80_assembler patchbay midi keyboard memory_loader
-    floppy ym2413_inspector ymw258_inspector)
-  foreach(tool IN LISTS SRZ80_TOOL_DIRECTORIES)
-    add_subdirectory("plugins/tools/${tool}")
-  endforeach()
+  add_subdirectory(plugins/tools)
 endif()
 
 add_custom_target(examples ALL COMMAND "${CMAKE_COMMAND}" -E copy_directory
