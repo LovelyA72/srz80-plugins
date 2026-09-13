@@ -1,0 +1,67 @@
+{
+  "cards": [
+    {
+      "base": 0,
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x8000",
+      "space": "cpu0.memory"
+    },
+    {
+      "base": "0x8000",
+      "image": "empty.rom",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "cpu0.memory"
+    },
+    {
+      "clock": 0,
+      "config": {
+        "clock_hz_hint": 1000000
+      },
+      "plugin": "w65c816",
+      "space": "cpu0.memory"
+    },
+    {
+      "base": "0xD400",
+      "config": {
+        "chip_clock_hz": 985248,
+        "model": "8580",
+        "sample_rate": 44100,
+        "stream_name": "Empty SID"
+      },
+      "plugin": "sid",
+      "priority": 10,
+      "size": "0x20",
+      "space": "cpu0.memory"
+    }
+  ],
+  "clocks": [
+    1125000,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "4mat's Empty SID tune running in the W65C816's 6502 emulation mode with a memory-mapped MOS 8580 SID.",
+    "title": "Empty: W65C816 + RAM + SID"
+  },
+  "name": "w65c816-sid",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "empty.asm"
+  },
+  "version": 2
+}

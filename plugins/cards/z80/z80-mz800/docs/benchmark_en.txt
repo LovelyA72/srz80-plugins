@@ -1,0 +1,202 @@
+==============================================================================
+  Z80 Emulator Benchmark: cpu-z80 vs z80ex
+==============================================================================
+
+  Platform:   Windows 10/11, MSYS2/MinGW64, GCC 15.2.0
+  Test:       16,777,216 loop iterations, mixed instruction workload
+              (arithmetic, logic, memory, CB prefix, DD prefix,
+              PUSH/POP, conditional jump)
+  Cycles:     2,214,609,436 T-states (identical across all emulators
+              AND all cpu-z80 execution modes)
+  Tests:      441/441 PASS (cpu-z80) + 23/23 PASS (dasm-z80)
+  ZEXALL:     67/67 PASS (through both the batch and the per-step core)
+
+==============================================================================
+  WHY THIS DOCUMENT IS DIFFERENT FROM A SINGLE "2.8x" NUMBER
+==============================================================================
+
+  cpu-z80 can be driven two ways, and the throughput differs by ~3x
+  depending on which:
+
+    z80_execute(cpu, N)  - BATCH: run N T-states in one tight internal
+                           loop. Fastest, but a cycle-accurate emulator
+                           that must synchronise peripherals (video, wait
+                           states, IO) in the MIDDLE of an instruction
+                           CANNOT use it - it would only see state at
+                           batch boundaries.
+
+    z80_step(cpu)        - PER-STEP: run exactly one instruction and
+                           return. This is how a cycle-accurate emulator
+                           actually drives the CPU. It pays a per-call
+                           cost (function entry + interrupt check +
+                           post-step hook) on every instruction.
+
+  z80ex has no batch mode - it is per-step only (z80ex_step). The older
+  "~2.8x faster than z80ex" figure compared cpu-z80 BATCH against z80ex
+  PER-STEP. That is a real number, but it answers a question a real
+  emulator never asks. This document reports BOTH modes honestly.
+
+==============================================================================
+  EXECUTION MODES MEASURED
+==============================================================================
+
+  z80ex-mz800           Reference. z80ex (FUSE-derived, the variant
+                        mz800emu used before migrating to cpu-z80),
+                        per-step (z80ex_step). Opcode only - interrupt
+                        acceptance is left to the consumer.
+
+  cpu-z80 batch         z80_execute(cpu, 100000). Register cache, tight
+                        internal loop. Not usable by a mid-instruction
+                        cycle-accurate emulator.
+
+  cpu-z80 dispatch      Per-step core with interrupt acceptance and the
+                        post-step hook excluded (build flag
+                        CPU_Z80_DISPATCH_BENCH, benchmark only). This is
+                        the FAIR comparison to z80ex_step: both run only
+                        the opcode and leave interrupts to the caller.
+
+  cpu-z80 per-step      z80_step(cpu). The real cycle-accurate mode.
+                        Runs the opcode PLUS the interrupt check and the
+                        post-step hook every instruction (functionality
+                        z80ex_step does not provide).
+
+  cpu-z80 step+fastpath z80_step(cpu) with the optional RAM fast-path
+                        (-DCPU_Z80_RAM_FASTPATH) enabled over a flat
+                        64 KiB RAM.
+
+==============================================================================
+  RESULTS (same session, average of 3 runs O2 / 2 runs O3, MHz)
+==============================================================================
+
+  Mode                         -O2     vs z80ex     -O3
+  ---------------------------------------------------------------
+  z80ex-mz800 (per-step)       1072      1.00x      1097
+  cpu-z80 batch                2822      2.63x      2829
+  cpu-z80 dispatch core        1123      1.05x      1166
+  cpu-z80 per-step             ~830      0.77x       875
+  cpu-z80 per-step + fastpath   627      0.58x       681
+
+  (per-step O2 had run-to-run spread 750-870 MHz; see RAW DATA.)
+
+==============================================================================
+  ANALYSIS
+==============================================================================
+
+  1. The dispatch core is genuinely faster than z80ex.
+     Compared fairly (opcode only, no interrupt handling on either side),
+     cpu-z80 reaches 1123 MHz vs z80ex 1072 MHz - about 5% faster at O2,
+     more at O3. The computed-goto dispatch and the hand-written handlers
+     do their job.
+
+  2. Batch is fastest but not usable by a cycle-accurate emulator.
+     2822 MHz / 2.63x is real, but it requires running many T-states
+     without returning to the host - incompatible with mid-instruction
+     peripheral synchronisation. Treat it as an upper bound, not as the
+     number a real MZ-800/700/1500 emulator gets.
+
+  3. Full per-step (z80_step) is SLOWER than z80ex_step - and that is
+     expected, because it does more.
+     z80_step runs, on every instruction: the pre-instruction interrupt
+     check, the opcode, the post-step hook, and the post-instruction
+     interrupt check. z80ex_step runs only the opcode and leaves
+     interrupt acceptance to the consumer's own code. So the comparison
+     "830 vs 1072" is not like-for-like: cpu-z80 is doing integrated work
+     that the z80ex benchmark loop simply omits. The dispatch-core row
+     (which removes that integrated work) shows the underlying core is
+     faster.
+
+  4. The RAM fast-path needs an EXPENSIVE callback to pay off.
+     In this microbenchmark the memory callback is trivial (return
+     ram[addr]) and the compiler inlines it. The fast-path then only adds
+     its own checks (enabled / page lookup / NULL / latch) with nothing to
+     save, so it is slower here (627 MHz). Its purpose is a real emulator
+     where the callback decodes banking, mapping and contended timing -
+     there, skipping the callback for clean RAM is a net win. This
+     microbenchmark cannot show that benefit; do not read 627 MHz as the
+     fast-path's real-world value.
+
+  The per-step cost is a deliberate trade-off, not a defect:
+  - Per-step is slower than BATCH because cycle-accurate peripheral
+    synchronisation forces a return to the host after every instruction.
+    You give up the 2.6x batch speedup to get accurate mid-instruction
+    timing - this is the price of accuracy.
+  - Per-step is slightly slower than z80ex_step because z80_step also runs
+    the interrupt check and the post-step hook on every instruction - work
+    z80ex leaves to the consumer. This is the price of built-in
+    functionality.
+  Crucially, the accurate dispatch core itself is FASTER than z80ex (see
+  the "dispatch core" row). Accuracy is NOT what slows cpu-z80 down; the
+  per-step cost buys integrated functionality and the freedom to be
+  cycle-accurate, not the accuracy of the instruction set.
+
+  Bottom line: cpu-z80's advantages for a real emulator are accuracy
+  (LD A,I/R bug, Q register, per-M-cycle T-states, the callback suite),
+  the MIT license, the small hand-written source, a dispatch core that is
+  modestly faster than z80ex, and - on hosts with an expensive memory map -
+  the optional RAM fast-path. Raw per-step throughput against z80ex is
+  roughly a wash; the headline "2.8x" applies to batch only.
+
+==============================================================================
+  ACCURACY
+==============================================================================
+
+  Every emulator and every cpu-z80 execution mode produces the SAME
+  cycle count:
+
+    z80ex                       2,214,609,436   (reference)
+    cpu-z80 batch               2,214,609,436
+    cpu-z80 per-step            2,214,609,436
+    cpu-z80 per-step+fastpath   2,214,609,436
+
+  cpu-z80 features beyond z80ex: LD A,I/R HW bug, Q register, RETI/INTACK/
+  EI callbacks, post-step callback, wait states, op_tstate tracking,
+  multi-instance, user_data, z80_get/set_reg, and the di/im/halt/nmi/
+  iff_change/cpu_ctrl_event/call/ret event callbacks.
+
+  ZEXALL (67/67) passes through BOTH the batch core (z80_execute) and the
+  per-step core (z80_step, tests-zexall -DZEXALL_PER_STEP), with an
+  identical 3,785,306,090 T-states - proof the two cores are bit-identical
+  over the full documented + undocumented instruction set.
+
+==============================================================================
+  RAW DATA
+==============================================================================
+
+  --- O2, 3 runs (MHz) ---
+  z80ex-mz800:        1084.0  1062.2  1070.4
+  cpu-z80 batch:      2835.6  2803.3  2828.4
+  cpu-z80 dispatch:   1125.3  1116.8  1128.2
+  cpu-z80 per-step:    869.8   750.2   869.5
+  cpu-z80 step+fp:     626.1   629.7   625.1
+
+  --- O3, 2 runs (MHz) ---
+  z80ex-mz800:        1095.3  1099.1
+  cpu-z80 batch:      2842.9  2814.0
+  cpu-z80 dispatch:   1160.7  1171.8
+  cpu-z80 per-step:    870.2   879.5
+  cpu-z80 step+fp:     683.7   677.9
+
+  Reproduce:  cd bench && make compare           (all cpu-z80 modes)
+              make bench_z80ex_mz800.exe          (needs z80ex in ../tmp/)
+
+==============================================================================
+  VERSION HISTORY - PERFORMANCE IMPACT
+==============================================================================
+
+  v0.2.x   Batch core only (z80_execute). The "~2.8x vs z80ex" figure in
+           earlier docs is the batch-vs-z80ex-per-step comparison. Patch
+           releases added event callbacks (NULL by default, negligible
+           cost) and the HALT-PC accuracy fix - no measurable regression.
+
+  v0.3.0   Per-step core (z80_step) split out for cycle-accurate hosts,
+           and an optional RAM fast-path. Bit-identical (cycle count and
+           ZEXALL unchanged through both cores). This release is also
+           where the per-step vs batch gap was measured and documented
+           honestly: batch is ~2.6x z80ex, the dispatch core ~1.05x, and
+           full per-step is below z80ex because z80_step integrates
+           interrupt + post-step handling that z80ex_step leaves to the
+           caller.
+
+  v0.3.1   Bugfix: EI-delay in the per-step core (gated compile-time, batch
+           unchanged). No performance impact - the per-step path even saves
+           one write per step. Cycle count and ZEXALL unchanged.

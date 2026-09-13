@@ -1,0 +1,361 @@
+================================================================================
+  cpu-z80 v0.3.1 - API Reference
+  Accurate and fast multi-instance Zilog Z-80A processor emulator
+================================================================================
+
+
+1. OVERVIEW
+================================================================================
+
+Multi-instance Z80A emulator in ANSI C. Each CPU instance carries its own
+callbacks and user_data - multiple independent instances can run simultaneously.
+
+  - Complete instruction set including undocumented instructions
+  - Precise T-state (cycle) counting
+  - Correct behavior of all flags including undocumented F3/F5
+  - Internal MEMPTR/WZ register
+  - Interrupt modes IM0, IM1, IM2 and NMI
+  - Callback system with user_data for memory, I/O and interrupts
+  - API compatible with cpu-z80 single-v0.2 (drop-in replacement)
+
+Files:
+  cpu/z80.h       - Public API (types, structures, functions)
+  cpu/z80.c       - Implementation
+  utils/types.h   - Type aliases (u8, u16, u32, s8, ...)
+
+
+2. BASIC USAGE
+================================================================================
+
+  #include "cpu/z80.h"
+
+  static u8 ram[65536];
+
+  static u8 mem_read(z80_t *cpu, u16 addr, int m1_state, void *data) {
+      (void)cpu; (void)m1_state; (void)data;
+      return ram[addr];
+  }
+
+  static void mem_write(z80_t *cpu, u16 addr, u8 value, void *data) {
+      (void)cpu; (void)data;
+      ram[addr] = value;
+  }
+
+  static u8 io_read(z80_t *cpu, u16 port, void *data) {
+      (void)cpu; (void)data;
+      return 0xFF;
+  }
+
+  static void io_write(z80_t *cpu, u16 port, u8 value, void *data) {
+      (void)cpu; (void)port; (void)value; (void)data;
+  }
+
+  int main(void) {
+      z80_t *cpu = z80_create(
+          mem_read, NULL,
+          mem_write, NULL,
+          io_read, NULL,
+          io_write, NULL,
+          NULL, NULL       /* intread - not needed */
+      );
+
+      /* Load program into RAM... */
+
+      /* Emulate 1 frame (69888 T-states for ZX Spectrum) */
+      z80_execute(cpu, 69888);
+
+      z80_destroy(cpu);
+      return 0;
+  }
+
+
+3. TYPES
+================================================================================
+
+3.1 Basic types (utils/types.h)
+-------------------------------
+
+  u8, u16, u32, u64   Unsigned types (uint8_t ... uint64_t)
+  s8, s16, s32         Signed types (int8_t ... int32_t)
+
+3.2 Callback types
+------------------
+
+  typedef u8 (*z80_mread_cb)(z80_t *cpu, u16 addr, int m1_state, void *user_data);
+    Memory read. m1_state: 1 = M1 fetch (opcode), 0 = data read.
+
+  typedef void (*z80_mwrite_cb)(z80_t *cpu, u16 addr, u8 value, void *user_data);
+    Memory write.
+
+  typedef u8 (*z80_pread_cb)(z80_t *cpu, u16 port, void *user_data);
+    I/O port read. port is 16-bit (IN A,(n) -> A:n, IN r,(C) -> BC).
+
+  typedef void (*z80_pwrite_cb)(z80_t *cpu, u16 port, u8 value, void *user_data);
+    I/O port write.
+
+  typedef u8 (*z80_intread_cb)(z80_t *cpu, void *user_data);
+    Read interrupt vector from peripheral (for z80_int()).
+
+  typedef void (*z80_intack_cb)(z80_t *cpu, void *user_data);
+    INTACK signal - interrupt acknowledge. For daisy chain.
+
+  typedef void (*z80_reti_cb)(z80_t *cpu, void *user_data);
+    RETI instruction - peripheral notification.
+
+  typedef void (*z80_ei_cb)(z80_t *cpu, void *user_data);
+    Called when EI instruction is executed.
+
+  typedef void (*z80_di_cb)(z80_t *cpu, void *user_data);
+    Called when DI instruction is executed.
+
+  typedef void (*z80_im_cb)(z80_t *cpu, u8 new_im, void *user_data);
+    Called when IM 0/1/2 changes the interrupt mode. new_im is the new value.
+
+  typedef void (*z80_halt_cb)(z80_t *cpu, void *user_data);
+    Called when HALT instruction puts the CPU in halt state.
+
+  typedef void (*z80_nmi_cb)(z80_t *cpu, void *user_data);
+    Called from z80_nmi() when NMI is asserted.
+
+  typedef enum {
+      Z80_IFF_REASON_RESET    = 0,  // CPU reset
+      Z80_IFF_REASON_EI       = 1,  // EI instruction
+      Z80_IFF_REASON_DI       = 2,  // DI instruction
+      Z80_IFF_REASON_INT_ACK  = 3,  // Maskable INT accepted (any IM)
+      Z80_IFF_REASON_NMI_ACK  = 4,  // NMI accepted
+      Z80_IFF_REASON_RETI     = 5,  // RETI
+      Z80_IFF_REASON_RETN     = 6   // RETN
+  } z80_iff_change_reason_t;
+    Reason passed to z80_iff_change_cb.
+
+  typedef void (*z80_iff_change_cb)(z80_t *cpu,
+                                    u8 new_iff1, u8 new_iff2,
+                                    u8 reason, void *user_data);
+    Fires every time the CPU writes IFF1 or IFF2 - EI, DI, RETI, RETN,
+    INT ack (any IM), NMI ack, and reset. Complementary to ei/di/nmi/reti
+    callbacks, gives a single observation point for the interrupt state.
+    NULL = no-op, zero overhead in the hot path.
+
+  typedef enum {
+      Z80_CPU_CTRL_HALT_ENTER = 0,  // HALT executed, cpu->halted 0->1
+      Z80_CPU_CTRL_HALT_EXIT  = 1,  // IRQ/NMI woke from HALT, cpu->halted 1->0
+      Z80_CPU_CTRL_RST_00     = 2,  // 0xC7
+      Z80_CPU_CTRL_RST_08     = 3,  // 0xCF
+      Z80_CPU_CTRL_RST_10     = 4,  // 0xD7
+      Z80_CPU_CTRL_RST_18     = 5,  // 0xDF
+      Z80_CPU_CTRL_RST_20     = 6,  // 0xE7
+      Z80_CPU_CTRL_RST_28     = 7,  // 0xEF
+      Z80_CPU_CTRL_RST_30     = 8,  // 0xF7
+      Z80_CPU_CTRL_RST_38     = 9   // 0xFF
+  } z80_cpu_ctrl_event_t;
+    Event ID passed to z80_cpu_ctrl_event_cb.
+
+  typedef void (*z80_cpu_ctrl_event_cb)(z80_t *cpu, u8 event, u16 pc,
+                                        void *user_data);
+    Fires on HALT entry (op 0x76), HALT exit (IRQ/NMI ack, only if CPU
+    was actually halted), and on dispatch of every RST opcode 0xC7..0xFF.
+    pc is the instruction address after the HALT/RST opcode (i.e. the
+    return address pushed by RST, or the address the CPU would resume
+    at after wake-up). Complementary to halt_cb. NULL = no-op,
+    zero overhead in the hot path.
+
+  typedef void (*z80_call_cb)(z80_t *cpu,
+                              u16 call_site, u16 target, u16 return_addr,
+                              void *user_data);
+    Fires on dispatch of every CALL nn (0xCD) and every taken
+    CALL cc, nn (0xC4..0xFC). Not-taken conditional CALLs do not fire.
+    Fire timing: right before PUSH(rPC); rPC = target.
+    Intended for callstack subsystems (shadow stack push). NULL = no-op.
+
+  typedef void (*z80_ret_cb)(z80_t *cpu,
+                             u16 pop_target, u16 sp_before_pop,
+                             void *user_data);
+    Fires on dispatch of RET (0xC9) and every taken RET cc (0xC0..0xF8).
+    Not-taken conditional RETs do not fire. Does NOT cover RETI (ED 4D)
+    or RETN (ED 45) - those route through reti_cb and iff_change_cb
+    respectively. pop_target is PEEK16(sp_before_pop).
+    Intended for callstack subsystems (shadow stack pop). NULL = no-op.
+
+3.3 z80_reg_t
+-------------
+
+  Enum for z80_get_reg() / z80_set_reg():
+    Z80_REG_AF, Z80_REG_BC, Z80_REG_DE, Z80_REG_HL,
+    Z80_REG_AF2, Z80_REG_BC2, Z80_REG_DE2, Z80_REG_HL2,
+    Z80_REG_IX, Z80_REG_IY, Z80_REG_SP, Z80_REG_PC,
+    Z80_REG_WZ, Z80_REG_IR
+
+3.4 z80_t
+---------
+
+  CPU state structure. Directly accessible registers:
+    z80_pair_t af, bc, de, hl          Main set
+    z80_pair_t af2, bc2, de2, hl2      Alternate set
+    z80_pair_t ix, iy, wz              Index + MEMPTR
+    u16 sp, pc                         Stack Pointer, Program Counter
+    u8 i, r                            Interrupt Vector, Refresh
+    u8 iff1, iff2, im                  Interrupt system
+    bool halted, int_pending, nmi_pending
+    u32 cycles, total_cycles           T-state counters
+    int wait_cycles                    Extra wait states
+
+
+4. FUNCTIONS
+================================================================================
+
+4.1 Lifecycle
+-------------
+
+  z80_t *z80_create(
+      z80_mread_cb mread, void *mread_data,
+      z80_mwrite_cb mwrite, void *mwrite_data,
+      z80_pread_cb pread, void *pread_data,
+      z80_pwrite_cb pwrite, void *pwrite_data,
+      z80_intread_cb intread, void *intread_data
+  );
+    Create a new CPU instance. Allocates memory, sets callbacks, performs reset.
+    intread may be NULL. Returns NULL on allocation failure.
+
+  void z80_destroy(z80_t *cpu);
+    Destroy CPU instance. cpu may be NULL (no-op).
+
+  void z80_reset(z80_t *cpu);
+    Reset CPU. Preserves callbacks, resets registers and interrupt system.
+    AF = 0xFFFF, SP = 0xFFFF, PC = 0x0000, others = 0.
+
+4.2 Emulation
+-------------
+
+  int z80_step(z80_t *cpu);
+    Execute exactly one instruction; return its T-states. Uses the
+    per-step core: main registers live directly in cpu-> (no register-cache
+    prologue/epilogue per call). Use this for cycle-accurate hosts that
+    synchronise peripherals per instruction.
+
+  int z80_execute(z80_t *cpu, int target_cycles);
+    Execute instructions until target_cycles T-states are reached; return
+    the actual count (>= target_cycles). Uses the batch core: main
+    registers are cached in C locals and the prologue/epilogue is amortised
+    over the batch - fastest for non-cycle-accurate bulk execution, but it
+    does not return to the host mid-instruction.
+
+  Both cores are compiled from one shared source (cpu/z80_execute.inc) and
+  are bit-identical (same cycle count; ZEXALL passes through both). See
+  docs/benchmark_*.txt for the throughput difference between the two.
+
+4.3 Interrupts
+--------------
+
+  void z80_int(z80_t *cpu);
+    Trigger maskable interrupt. Vector is read via intread callback.
+
+  void z80_irq(z80_t *cpu, u8 vector);
+    Trigger maskable interrupt with explicit vector.
+    IM0: vector & 0x38, IM1: ignored, IM2: (I << 8) | (vector & 0xFE).
+
+  void z80_nmi(z80_t *cpu);
+    Trigger NMI (jump to 0x0066, IFF2 = IFF1, IFF1 = 0). 11T.
+
+4.4 Register access
+-------------------
+
+  u16 z80_get_reg(z80_t *cpu, z80_reg_t reg);
+  void z80_set_reg(z80_t *cpu, z80_reg_t reg, u16 value);
+  bool z80_is_halted(z80_t *cpu);
+
+  Registers are also directly accessible via cpu->af.w, cpu->bc.h etc.
+
+  Note: while the CPU is halted (z80_is_halted() == true), PC holds the
+  address of the HALT instruction itself (real-Z80 behaviour). The
+  increment to the return address happens at INT/NMI accept time, so
+  the address pushed on the stack is still "HALT address + 1".
+
+4.5 Dynamic callback changes
+-----------------------------
+
+  void z80_set_mread(z80_t *cpu, z80_mread_cb fn, void *data);
+  void z80_set_mwrite(z80_t *cpu, z80_mwrite_cb fn, void *data);
+  void z80_set_pread(z80_t *cpu, z80_pread_cb fn, void *data);
+  void z80_set_pwrite(z80_t *cpu, z80_pwrite_cb fn, void *data);
+  void z80_set_intread(z80_t *cpu, z80_intread_cb fn, void *data);
+  void z80_set_intack(z80_t *cpu, z80_intack_cb fn, void *data);
+  void z80_set_reti(z80_t *cpu, z80_reti_cb fn, void *data);
+  void z80_set_ei(z80_t *cpu, z80_ei_cb fn, void *data);
+  void z80_set_di(z80_t *cpu, z80_di_cb fn, void *data);
+  void z80_set_im_change(z80_t *cpu, z80_im_cb fn, void *data);
+  void z80_set_halt(z80_t *cpu, z80_halt_cb fn, void *data);
+  void z80_set_nmi_cb(z80_t *cpu, z80_nmi_cb fn, void *data);
+  void z80_set_iff_change(z80_t *cpu, z80_iff_change_cb fn, void *data);
+  void z80_set_cpu_ctrl_event(z80_t *cpu, z80_cpu_ctrl_event_cb fn, void *data);
+  void z80_set_call(z80_t *cpu, z80_call_cb fn, void *data);
+  void z80_set_ret(z80_t *cpu, z80_ret_cb fn, void *data);
+  void z80_set_post_step(z80_t *cpu, void (*fn)(z80_t *, void *), void *data);
+
+  All event callbacks (ei/di/im/halt/nmi/iff_change/cpu_ctrl_event/
+  call/ret) default to NULL (no-op). When NULL, the dispatch loop takes
+  a single nullable branch per opcode, so disabled callbacks have
+  negligible cost in benchmarks. Callbacks survive z80_reset(); on
+  reset, iff_change_cb additionally fires with reason RESET so the
+  consumer can observe the reset as a distinct IFF source.
+
+4.6 Utility functions
+---------------------
+
+  void z80_add_wait_states(z80_t *cpu, int wait);
+    Add extra T-states from callbacks (e.g. contended memory).
+
+4.7 Optional RAM fast-path (build-time, opt-in)
+-----------------------------------------------
+
+  Compile with -DCPU_Z80_RAM_FASTPATH to enable an inline page-table path
+  for clean-RAM memory access, bypassing the read/write callbacks. Without
+  the define, the function below and the related z80_t fields do not exist.
+
+  void z80_set_ram_fastpath(z80_t *cpu,
+                            u8 *const read_table[16],
+                            u8 *const write_table[16],
+                            u8 *dbus_latch, bool enabled);
+
+    read_table / write_table: 16 entries, one per 4 KiB page (index
+      addr >> 12). A non-NULL entry is the base of a clean-RAM 4 KiB bank;
+      access goes inline via page[addr & 0x0FFF]. A NULL entry falls back
+      to the memory callback (use for mapped IO / ROM / contended pages).
+      The tables are copied into the instance.
+    dbus_latch: optional pointer the fast-path read mirrors the byte into
+      (replicates a data-bus latch side effect of your read callback), or
+      NULL.
+    enabled: master gate. Set false whenever a logging/tracing callback is
+      installed whose side effects the fast-path cannot replicate.
+
+  Call it on every memory-map change (banking). It pays off only when the
+  memory callback is expensive; with a trivial callback it is pure overhead
+  (see docs/benchmark_*.txt).
+
+
+5. FLAGS
+================================================================================
+
+  Z80_FLAG_C  (0x01)  Carry        Z80_FLAG_H  (0x10)  Half Carry
+  Z80_FLAG_N  (0x02)  Subtract     Z80_FLAG_5  (0x20)  Undoc. bit 5
+  Z80_FLAG_PV (0x04)  Parity/OV    Z80_FLAG_Z  (0x40)  Zero
+  Z80_FLAG_3  (0x08)  Undoc. bit 3 Z80_FLAG_S  (0x80)  Sign
+
+  Access: cpu->af.l
+
+
+6. CONSTANTS
+================================================================================
+
+  CPU_Z80_VERSION   "v0.3.1"
+
+
+7. PROJECT INTEGRATION
+================================================================================
+
+  gcc -O2 -I /path/to/cpu-z80 -c cpu/z80.c -o z80.o
+  gcc -o emulator emulator.c z80.o
+
+  Optional RAM fast-path (see 4.7):
+  gcc -O2 -DCPU_Z80_RAM_FASTPATH -I /path/to/cpu-z80 -c cpu/z80.c -o z80.o
+
+  Requirements: C99+, GCC/Clang (computed goto), little-endian platform.

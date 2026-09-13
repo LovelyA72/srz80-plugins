@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "metadata": {"title": "1-bit DPCM song player", "description": "The RV32I firmware plays the complete song from the ADPCM card's private sample RAM, then repeats it."},
+  "spaces": [{"name": "rv.memory", "maximum": "0xFFFFFFFF", "resolver": "priority", "unclaimed": 0}],
+  "clocks": [1000000, 0, 0],
+  "time_mode": "project",
+  "epoch_ns": 0,
+  "seed": 1,
+  "cards": [
+    {"plugin": "ram", "space": "rv.memory", "base": 65536, "size": 16384},
+    {"plugin": "rom", "space": "rv.memory", "base": 0, "size": 0, "image": "demo.rom", "priority": 10},
+    {"plugin": "adpcm", "space": "rv.memory", "base": 268435456, "size": 32, "images": ["samples.bin"], "config": {"stream_name": "1-bit DPCM song"}},
+    {"plugin": "riscv", "space": "rv.memory", "clock": 0, "reset_vector": 0}
+  ]
+}

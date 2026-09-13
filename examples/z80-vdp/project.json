@@ -1,0 +1,78 @@
+{
+  "cards": [
+    {
+      "base": "0x8000",
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x4000",
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 0,
+      "image": "vdp.rom",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 152,
+      "clock": 0,
+      "config": {
+        "io_space": "cpu0.io",
+        "model": "V9958",
+        "raster_clock_hz": 21477272,
+        "vram_size": 131072
+      },
+      "plugin": "vdp",
+      "plugin_data": {
+        "data": "",
+        "encoding": "hex"
+      },
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 4,
+      "space": "cpu0.io"
+    },
+    {
+      "clock": 0,
+      "config": {
+        "clock_hz_hint": 3686400,
+        "io_space": "cpu0.io"
+      },
+      "plugin": "z80",
+      "reset_vector": 0,
+      "space": "cpu0.memory"
+    }
+  ],
+  "clocks": [
+    3686400,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "128 stars on black, scrolling right to left with three parallax speeds and brightness levels, drawn by the Z80 through the VDP ports.",
+    "title": "Starfield — Z80 / VDP"
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    },
+    {
+      "maximum": "0x00FF",
+      "name": "cpu0.io",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

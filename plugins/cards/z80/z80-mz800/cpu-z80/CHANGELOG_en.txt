@@ -1,0 +1,380 @@
+================================================================================
+  cpu-z80 - Changelog
+================================================================================
+
+v0.3.1 (2026-06-25)
+--------------------
+Bugfix: EI-delay in the per-step core
+
+The per-step core (z80_step) cleared cpu->ei_delay in the check_interrupts
+epilog at the end of every step. After an EI instruction the cleared flag let
+the NEXT step's entry interrupt check accept a pending maskable interrupt
+BEFORE the instruction following EI - so the one-instruction EI-delay was
+effectively zero in the per-step path. For "EI; LD SP,nn" the interrupt was
+taken before LD SP and the return-address push went to the old (stale) stack,
+corrupting memory.
+
+Fix: the epilog ei_delay clear is now gated #if !Z80_DIRECT_REGS. The batch
+core (z80_execute) is unchanged - it needs the clear because its entry clear
+runs only once per batch. The per-step core omits it and relies on the next
+step's entry clear (which runs before dispatching the instruction after EI),
+giving an exact one-instruction EI-delay (replicates z80ex's noint_once).
+Compile-time, no runtime branch; per-step also saves one write.
+
+Affects only the per-step core introduced in v0.3.0; the batch path was never
+affected.
+
+Tests:
+  - New tests/test_ei_delay.c (5 cases): ei_delay lifetime, EI;EI chaining,
+    a pending INT deferred by exactly one instruction, the "EI; LD SP,nn"
+    regression (the push must land on the NEW stack), and a guard that the
+    batch epilog still clears ei_delay. The regression cases fail without the
+    fix (verified).
+  - 441/441 unit tests PASS (436 -> 441).
+  - ZEXALL unchanged through both cores (3 785 306 090 T-states; ZEXALL does
+    not exercise interrupt-acceptance timing). No performance impact.
+
+v0.3.0 (2026-06-22)
+--------------------
+Per-step execution core + optional RAM fast-path (bit-identical)
+
+Two performance additions, both bit-identical to v0.2.7 (verified: 436/436
+unit tests, ZEXALL through BOTH the batch and the per-step core, and an
+identical cycle count 2 214 609 436 across all execution modes). Public
+behaviour and the existing API are unchanged; one new opt-in function
+(z80_set_ram_fastpath).
+
+Per-step core (z80_step):
+  The execute-loop body moved into a shared include (cpu/z80_execute.inc)
+  compiled twice from one source - no handler text is duplicated:
+    - z80_execute() -> batch core: main registers cached in C locals
+      (RELOAD/WRITEBACK), prologue/epilogue amortised over the batch.
+    - z80_step()    -> per-step core: registers alias cpu-> directly, no
+      cache, no RELOAD/WRITEBACK. Removes the per-call register-cache
+      prologue/epilogue when the host drives the CPU one instruction at a
+      time (cycle-accurate emulators). z80_step() previously called
+      z80_execute(cpu, 1) and paid that prologue/epilogue per instruction.
+
+Optional RAM fast-path (-DCPU_Z80_RAM_FASTPATH, opt-in, default off):
+  z80_set_ram_fastpath(cpu, read_table[16], write_table[16], dbus_latch,
+  enabled) installs a 16-entry page table (one 4 KiB page per entry, index
+  addr>>12). RD/WR/FETCH to a clean-RAM page (non-NULL pointer) go inline
+  via page[addr & 0x0FFF] instead of the memory callback; NULL pages
+  (mapped IO/ROM/contended) fall back to mread_cb/mwrite_cb with full
+  side-effect and timing fidelity. The integrating layer rebuilds the
+  table on each banking change. It pays off ONLY when the memory callback
+  is expensive (a real banked memory map); with a trivial callback it is
+  pure overhead (see the benchmark notes below).
+
+Performance (honest, same-session microbenchmark vs z80ex-mz800, O2 avg):
+  z80ex-mz800 (per-step)            1072 MHz   1.00x
+  cpu-z80 batch (z80_execute)       2822 MHz   2.63x
+  cpu-z80 dispatch core             1123 MHz   1.05x
+  cpu-z80 per-step (z80_step)       ~830 MHz   0.77x  (run spread 750-870)
+  cpu-z80 per-step + fast-path       627 MHz   0.58x
+
+  Notes:
+  - Batch (2.63x) is NOT representative of real use: a cycle-accurate
+    emulator that synchronises peripherals mid-instruction cannot batch.
+  - "Dispatch core" = the per-step core with interrupt acceptance excluded
+    - the fair comparison to z80ex_step(), which also executes only the
+    opcode and leaves interrupt acceptance to the caller. cpu-z80's
+    computed-goto dispatch is ~5% faster than z80ex here.
+  - Full per-step (z80_step) is slower than z80ex_step because z80_step
+    ALSO runs the interrupt check and the post_step hook on every
+    instruction; z80ex_step does neither (the consumer drives interrupts).
+    The slowdown is integrated functionality, not a slower core.
+  - Per-step + fast-path is slower HERE only because the benchmark's
+    memory callback is trivial (return ram[addr]); the fast-path's benefit
+    appears only against an expensive callback.
+  The widely-quoted "2.8x" holds for the BATCH path only. See
+  docs/benchmark_*.txt for the full breakdown and methodology.
+
+Tests / tooling:
+  - tests-zexall: new per-step runner mode (-DZEXALL_PER_STEP) drives
+    ZEXALL through z80_step; passes with the same 3 785 306 090 T-states.
+  - bench: new per-step, per-step+fast-path and dispatch-core targets
+    (make compare).
+  - 436/436 unit tests PASS; cycle count 2 214 609 436 in batch, per-step
+    and per-step+fast-path.
+
+v0.2.7 (2026-06-01)
+--------------------
+Accuracy: PC now holds the HALT instruction address while halted
+
+A real Z80 keeps PC = X = the address of the HALT instruction for the
+whole duration of HALT (the instruction is re-fetched cyclically for
+DRAM refresh; PC is only incremented just before the jump into the
+INT/NMI service routine). cpu-z80 previously left PC at X+1 (the
+FETCH had already advanced it) for the duration of HALT, so an
+observer reading cpu->pc during HALT saw the wrong value.
+
+This only affected the OBSERVED PC during HALT. The value pushed on
+INT/NMI accept and the post-return behaviour were already correct
+(X+1), because the increment now happens at accept time instead of
+at fetch time.
+
+Fix (three touch points, event semantics unchanged):
+  - op_76 (HALT): after the HALT_ENTER event fires (which still sees
+    X+1), decrement the local PC back to X. The end-of-instruction
+    WRITEBACK propagates it to cpu->pc.
+  - NMI accept: if the CPU was halted, increment cpu->pc to X+1
+    before pushing the return address.
+  - INT accept: if the CPU was halted, increment cpu->pc to X+1
+    before the HALT_EXIT event and the push.
+
+  HALT_ENTER / HALT_EXIT events still observe X+1, so cpu_ctrl_event
+  consumers are unaffected.
+
+Consumer note: tests-zexall/zexall_runner.c used HALT as its CP/M
+BDOS / WBOOT trap and computed the trap address as `cpu->pc - 1`
+(assuming PC = X+1). It now reads `cpu->pc` directly, matching the
+corrected semantics.
+
+Tests:
+  - New tests/test_halt_pc.c (6 cases): PC holds the HALT address
+    after HALT, PC stays put across halt-loop steps, NMI / INT-IM1 /
+    INT-IM2 from HALT all push X+1, and a regression guard that an
+    INT taken outside HALT is not shifted by the was_halted path.
+  - Existing HALT-related cases in test_interrupts.c and
+    test_cpu_ctrl_event.c still pass (they assert events / halted
+    flag, not the during-HALT PC).
+  - Test count rises from 430 to 436.
+
+Tests: 436/436 PASS, cycle count unchanged (2 214 609 436).
+ZEXALL: PASS, 3 785 306 090 T-states unchanged (after the runner
+        trap-address adjustment above).
+Bench: O2 ~2790 MHz, O3 ~2790 MHz. Same-session A/B vs v0.2.6 is
+       within noise - the fix touches only op_76 and the INT/NMI
+       accept paths, none of which run in the benchmark loop.
+
+v0.2.6 (2026-05-20)
+--------------------
+Added: CALL / RET dispatch hooks for callstack subsystems
+  - z80_set_call(cpu, fn, data)
+  - z80_set_ret(cpu, fn, data)
+
+call_cb fires for every taken CALL:
+  - unconditional CALL nn (0xCD)
+  - CALL cc, nn (0xC4 / 0xCC / 0xD4 / 0xDC / 0xE4 / 0xEC / 0xF4 / 0xFC),
+    only when the condition is met (PC will actually be redirected)
+
+  Callback signature: (cpu, call_site, target, return_addr, user_data).
+  Fire timing: right before PUSH(rPC); rPC = target. At that moment
+  rPC already points past the CALL opcode (FETCH16 of the target has
+  run), and the stack does not yet hold the return address.
+  call_site = return_addr - 3 (3-byte CALL).
+
+ret_cb fires for every taken RET:
+  - unconditional RET (0xC9)
+  - RET cc (0xC0 / 0xC8 / 0xD0 / 0xD8 / 0xE0 / 0xE8 / 0xF0 / 0xF8),
+    only when the condition is met
+
+  Callback signature: (cpu, pop_target, sp_before_pop, user_data).
+  pop_target is read via PEEK16(sp_before_pop) (rd16_slow without
+  op_tstate tick - matches the debug peek pattern used elsewhere in
+  the core).
+
+  RETI (ED 4D) and RETN (ED 45) are NOT covered by ret_cb. They are
+  observable via reti_cb and iff_change_cb (reason = RETI / RETN)
+  respectively; an interrupt-return callstack frame should be tracked
+  through those.
+
+Pattern matches the v0.2.5 cpu_ctrl_event_cb. Hot path is a single
+NULL pointer check per call site; NULL = no-op, no measurable
+overhead. z80_reset() preserves both call_cb and ret_cb.
+
+Tests:
+  - 11 new unit cases in tests/test_call_ret_hooks.c covering
+    CALL nn / CALL cc taken+not-taken / RET / RET cc taken+not-taken,
+    NULL callback safety, normal instructions producing no event,
+    RETI/RETN explicitly NOT firing ret_cb, and z80_reset() preserving
+    both callbacks.
+  - Test count rises from 419 to 430.
+
+Documentation:
+  - API_en.txt / API_cz.txt 3.2 + 4.5 document the new callback
+    types and setters.
+
+Tests: 430/430 PASS, cycle count unchanged (2 214 609 436).
+ZEXALL: PASS, 3 785 306 090 T-states unchanged.
+Bench: O2 ~2893 MHz, O3 ~2912 MHz (within measurement noise of the
+       v0.2.5 baseline).
+
+v0.2.5 (2026-05-19)
+--------------------
+Added: CPU control event callback for HALT enter/exit and RST nn
+  - z80_set_cpu_ctrl_event(cpu, fn, data)
+
+The callback fires on:
+  - HALT entry (opcode 0x76) - cpu->halted transitions 0 -> 1
+  - HALT exit (IRQ/NMI ack inside handle_interrupts_internal) - only
+    if cpu->halted was actually 1 before the ack; an INT received
+    between regular instructions does NOT generate HALT_EXIT
+  - Dispatch of every RST opcode 0xC7..0xFF (8 distinct event IDs)
+
+  Event IDs are in the new enum z80_cpu_ctrl_event_t:
+    HALT_ENTER, HALT_EXIT, RST_00, RST_08, RST_10, RST_18, RST_20,
+    RST_28, RST_30, RST_38.
+
+  The pc parameter is the address right after the HALT/RST opcode:
+    - HALT_ENTER: the address the CPU would resume at on wake-up
+    - HALT_EXIT:  same address (passed before cpu->pc is overwritten
+                  by the interrupt vector)
+    - RST_xx:     the return address that gets pushed on the stack
+
+Complementary to halt_cb (which stays unchanged). Hot path: single
+NULL pointer check per call site. z80_reset() preserves the callback
+but does NOT auto-fire on reset.
+
+Tests:
+  - 9 new unit cases in tests/test_cpu_ctrl_event.c covering all
+    9 event IDs, NULL callback safety, HALT entry, HALT exit on IM1
+    INT, HALT exit on NMI, normal instructions producing no event,
+    INT between normal instructions NOT firing HALT_EXIT, and
+    callback survival across z80_reset().
+  - Test count rises from 410 to 419.
+
+Documentation:
+  - API_en.txt / API_cz.txt 3.2 + 4.5 document the new enum,
+    callback type and setter.
+
+Tests: 419/419 PASS, cycle count unchanged (2 214 609 436).
+ZEXALL: PASS, 3 785 306 090 T-states unchanged.
+Bench: O2 ~2910 MHz, O3 ~2910 MHz (within measurement noise of the
+       v0.2.4 baseline).
+
+v0.2.4 (2026-05-19)
+--------------------
+Added: unified IFF1/IFF2 change callback for debuggers and interrupt-
+       system observers
+  - z80_set_iff_change(cpu, fn, data)
+
+The callback fires every time the CPU writes IFF1 or IFF2:
+  - EI / DI instructions
+  - RETI / RETN
+  - INT acknowledge (any IM 0/1/2 - the Z80 always clears IFF1+IFF2
+    on INT ack regardless of mode, only the dispatched routine differs)
+  - NMI acknowledge (IFF2 holds the original IFF1 so RETN can restore
+    it; reason NMI_ACK signals semantics rather than a real IFF2 change)
+  - CPU reset
+
+Parameters: (cpu, new_iff1, new_iff2, reason, user_data). The reason
+is one of seven values in the new enum z80_iff_change_reason_t
+(RESET / EI / DI / INT_ACK / NMI_ACK / RETI / RETN), so consumers can
+distinguish dispatch-driven IFF clears (INT_ACK / NMI_ACK) from
+explicit instruction-driven changes (EI / DI / RETI / RETN).
+
+Hot path: a single NULL pointer check at each call site. NULL = no-op,
+no measurable overhead when the callback is not registered.
+z80_reset() preserves iff_change_cb across the cycle and, once the
+new state is in place, fires the callback once with reason RESET.
+
+Existing callbacks ei_cb / di_cb / nmi_cb / reti_cb / intack_cb are
+unchanged - both can coexist and fire independently for the same
+event, so consumers that already wire up specific callbacks continue
+to work without modification.
+
+Documentation:
+  - API_en.txt / API_cz.txt 3.2 + 4.5 list the new reason enum,
+    callback type and setter.
+
+Tests: 410/410 PASS, cycle count unchanged (2 214 609 436).
+ZEXALL: PASS, 3 785 306 090 T-states unchanged.
+Bench: O2 ~2902 MHz, O3 ~2937 MHz (within measurement noise of the
+       v0.2.3 baseline).
+
+v0.2.3 (2026-05-19)
+--------------------
+Added: four new dispatch-driven event callbacks for debuggers and
+       interrupt-system observers
+  - z80_set_di(cpu, fn, data)        - fires after DI is executed
+  - z80_set_im_change(cpu, fn, data) - fires after IM 0/1/2 changes the
+                                       interrupt mode (param = new IM)
+  - z80_set_halt(cpu, fn, data)      - fires after HALT puts CPU in halt
+  - z80_set_nmi_cb(cpu, fn, data)    - fires from z80_nmi() when NMI is
+                                       asserted
+
+Pattern matches the existing z80_set_ei: WRITEBACK / RELOAD bracket the
+callback so it can safely call z80_set_reg() during the running
+instruction (works with the v0.2.2 register-write fix).
+
+Defaults are NULL = no-op, so users that do not register get a single
+nullable branch per opcode and no measurable overhead.
+z80_reset() preserves all five event callbacks.
+
+Documentation:
+  - API_en.txt / API_cz.txt 3.2 + 4.5 list the new callback types and
+    setters. The previously undocumented z80_set_ei / z80_ei_cb (shipped
+    in v0.2.1) are now listed as well.
+
+Tests: 410/410 PASS, cycle count unchanged (2 214 609 436).
+Bench: O2 ~2858 MHz, O3 ~2872 MHz (within measurement noise).
+
+v0.2.2 (2026-05-19)
+--------------------
+Bugfix: lost register writes from callbacks during instruction
+  - z80_execute() caches main registers (A/F/B/C/D/E/H/L/PC/SP/WZ/R/Q)
+    in local variables. When a callback (mread/mwrite/pread/pwrite/intack/
+    reti/ei/post-step) wrote a register via z80_set_reg() during the
+    instruction, the change went to cpu->...w but was overwritten at
+    end-of-instruction WRITEBACK from the stale local cache.
+  - Fix: z80_execute() registers a stack-allocated z80_local_cache_t in
+    cpu->_active_cache; z80_set_reg() writes through both cpu->...w and
+    the cache pointers when active.
+  - Tests: 410/410 PASS, cycle count unchanged (2 214 609 436).
+  - Performance impact: within measurement noise (-0.2..-0.5 %); GCC
+    keeps locals in CPU registers via escape analysis.
+
+Maintenance: removed duplicate cpu-z80/z80.{c,h}
+  - Commit 4f055ba (v0.2.1) accidentally added cpu-z80/z80.c and
+    cpu-z80/z80.h as duplicates of cpu-z80/cpu/z80.{c,h}. All Makefiles
+    (tests, tests-zexall, bench) reference cpu-z80/cpu/z80.c only; the
+    root copies were unused.
+  - The earlier "fix lost register writes" patch (f4ced18) was applied
+    only to the orphan root copy, so the bug remained live in the
+    actually-built source. This release moves the fix to the canonical
+    cpu/z80.{c,h} and removes the duplicates.
+
+v0.2.1 (2026-04-03)
+--------------------
+  - op_tstate: T-states from instruction start (for contended memory timing)
+  - RD/WR/IO_RD/IO_WR macros with op_tstate tracking
+  - M1_FETCH (4T, m1_state=1) vs FETCH (3T, m1_state=0)
+  - wait_cycles now accumulated in NEXT macro
+  - z80_add_wait_states() also increments op_tstate
+  - Q register for correct SCF/CCF F3/F5 (Patrik Rak, 2018)
+  - EI callback (z80_set_ei)
+  - 410 tests (8 new for Q register)
+  - ZEXALL validation: 67/67 PASS
+
+v0.2 (2026-04-02)
+------------------
+First release of multi-instance Z80A emulator.
+
+Instruction set:
+  - Complete Z80A instruction set including undocumented instructions
+  - CB, ED, DD/FD, DD CB/FD CB prefix instructions
+  - Undocumented: IXH/IXL/IYH/IYL, SLL (CB 30-37), DD CB copy
+  - Precise T-states, flags (including F3/F5), MEMPTR/WZ
+  - IM0/1/2, NMI, EI delay, LD A,I/R HW bug
+  - DAA lookup table (2048 entries)
+
+API:
+  - z80_create() / z80_destroy() - dynamic allocation, callbacks with user_data
+  - z80_step(), z80_execute() - batch execution
+  - z80_int(), z80_irq(), z80_nmi()
+  - z80_get_reg() / z80_set_reg() / z80_is_halted()
+  - z80_add_wait_states()
+  - Dynamic setters: z80_set_mread(), z80_set_pwrite() etc.
+  - z80_set_post_step(), z80_set_intack(), z80_set_reti()
+
+Optimizations:
+  - Computed goto dispatch
+  - Local register cache in z80_execute()
+  - Local callback pointer cache (eliminates multi-instance overhead)
+  - FORCE_O2 on z80_execute() (stable performance even with -O3)
+
+Test suite:
+  - 402 tests - all PASS
+  - ZEXALL validation: 67/67 PASS

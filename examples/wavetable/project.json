@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "name": "wavetable",
+  "metadata": {
+    "title": "RV32IMF X1-010 wavetable lab",
+    "description": "UART-controlled X1-010 waveforms with MIDI input and a shared 1 MiB PCM sample window."
+  },
+  "spaces": [
+    {"name": "rv.memory", "maximum": "0xFFFFFFFF", "resolver": "priority", "unclaimed": 0}
+  ],
+  "clocks": [4000000, 0, 0],
+  "time_mode": "project",
+  "epoch_ns": 0,
+  "seed": 1,
+  "cards": [
+    {"plugin": "ram", "name": "Work RAM", "space": "rv.memory", "base": "0x4000", "size": "0xC000"},
+    {"plugin": "ram", "name": "Shared 1 MiB sample RAM", "space": "rv.memory", "base": "0x00100000", "size": "0x100000"},
+    {"plugin": "rom", "name": "RV32IMF firmware", "space": "rv.memory", "base": 0, "size": 0, "image": "demo.rom", "priority": 10},
+    {"plugin": "rom", "name": "PCM source ROM", "space": "rv.memory", "base": "0x20000000", "size": 0, "image": "pcm.bin", "priority": 10},
+    {
+      "plugin": "x1_010",
+      "name": "SETA X1-010",
+      "space": "rv.memory",
+      "base": "0x10000000",
+      "size": "0x2000",
+      "config": {
+        "chip_clock_hz": 16000000,
+        "sample_rate": 44100,
+        "sample_base": "0x00100000",
+        "sample_space": "rv.memory",
+        "stream_name": "X1-010 wavetable"
+      }
+    },
+    {
+      "plugin": "uart_console",
+      "name": "Waveform console",
+      "space": "rv.memory",
+      "base": "0x10002000",
+      "size": 2,
+      "config": {
+        "base": 268443648,
+        "endpoint": "wavetable.uart",
+        "transcript_capacity": 65536
+      }
+    },
+    {
+      "plugin": "midi",
+      "name": "MIDI input",
+      "space": "rv.memory",
+      "base": "0x10002100",
+      "size": 4,
+      "config": {
+        "endpoint": "wavetable.midi",
+        "irq": "IRQ",
+        "irq_enable": false,
+        "rx_enable": true,
+        "tx_enable": false,
+        "rx_capacity": 4096
+      }
+    },
+    {"plugin": "riscv", "name": "RISC-V RV32IMF", "space": "rv.memory", "clock": 0, "reset_vector": 0, "config": {"isa": "rv32imf"}}
+  ],
+  "tool_state": {
+    "midi": "{\"endpoint\":\"wavetable.midi\",\"path\":\"\",\"schema\":1}"
+  }
+}

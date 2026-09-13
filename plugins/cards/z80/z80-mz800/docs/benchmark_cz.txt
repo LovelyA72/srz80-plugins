@@ -1,0 +1,192 @@
+==============================================================================
+  Benchmark Z80 emulatoru: cpu-z80 vs z80ex
+==============================================================================
+
+  Platforma:  Windows 10/11, MSYS2/MinGW64, GCC 15.2.0
+  Test:       16 777 216 iteraci smycky, mix instrukci (aritmetika, logika,
+              pamet, CB prefix, DD prefix, PUSH/POP, podmineny skok)
+  Cykly:      2 214 609 436 T-stavu (identicky u vsech emulatoru
+              I u vsech rezimu provadeni cpu-z80)
+  Testy:      441/441 PASS (cpu-z80) + 23/23 PASS (dasm-z80)
+  ZEXALL:     67/67 PASS (pres batch i per-step jadro)
+
+==============================================================================
+  PROC TENTO DOKUMENT NENI JEDNO CISLO "2.8x"
+==============================================================================
+
+  cpu-z80 lze pohanet dvema zpusoby a propustnost se podle toho lisi ~3x:
+
+    z80_execute(cpu, N)  - BATCH: provede N T-stavu v jedne tesne interni
+                           smycce. Nejrychlejsi, ale cycle-accurate emulator,
+                           ktery musi synchronizovat periferie (video, wait
+                           staty, IO) UPROSTRED instrukce, ho pouzit NEMUZE -
+                           videl by stav jen na hranicich davek.
+
+    z80_step(cpu)        - PER-STEP: provede prave jednu instrukci a vrati
+                           se. Takhle cycle-accurate emulator CPU realne
+                           pohani. Plati per-call cenu (vstup funkce +
+                           interrupt check + post-step hook) kazdou instrukci.
+
+  z80ex batch rezim nema - je jen per-step (z80ex_step). Starsi cislo
+  "~2.8x rychlejsi nez z80ex" srovnavalo cpu-z80 BATCH proti z80ex
+  PER-STEP. Je to realne cislo, ale odpovida na otazku, kterou realny
+  emulator nikdy neklade. Tento dokument hlasi OBA rezimy poctive.
+
+==============================================================================
+  MERENE REZIMY PROVADENI
+==============================================================================
+
+  z80ex-mz800           Reference. z80ex (odvozeny z FUSE, varianta kterou
+                        mz800emu pouzival pred migraci na cpu-z80), per-step
+                        (z80ex_step). Jen opcode - prijeti preruseni necha
+                        na consumerovi.
+
+  cpu-z80 batch         z80_execute(cpu, 100000). Registrova cache, tesna
+                        interni smycka. Pro mid-instruction cycle-accurate
+                        emulator nepouzitelne.
+
+  cpu-z80 dispatch      Per-step jadro s vyloucenou obsluhou preruseni a
+                        post-step hookem (build flag CPU_Z80_DISPATCH_BENCH,
+                        jen benchmark). Toto je FER srovnani s z80ex_step:
+                        oba provadi jen opcode a preruseni nechaji na
+                        volajicim.
+
+  cpu-z80 per-step      z80_step(cpu). Realny cycle-accurate rezim. Provadi
+                        opcode PLUS interrupt check a post-step hook kazdou
+                        instrukci (funkcnost, kterou z80ex_step neposkytuje).
+
+  cpu-z80 step+fastpath z80_step(cpu) s volitelnym RAM fast-pathem
+                        (-DCPU_Z80_RAM_FASTPATH) nad plochou 64 KiB RAM.
+
+==============================================================================
+  VYSLEDKY (stejna session, prumer 3 behu O2 / 2 behu O3, MHz)
+==============================================================================
+
+  Rezim                        -O2     vs z80ex     -O3
+  ---------------------------------------------------------------
+  z80ex-mz800 (per-step)       1072      1.00x      1097
+  cpu-z80 batch                2822      2.63x      2829
+  cpu-z80 dispatch jadro       1123      1.05x      1166
+  cpu-z80 per-step             ~830      0.77x       875
+  cpu-z80 per-step + fastpath   627      0.58x       681
+
+  (per-step O2 mel rozptyl behu 750-870 MHz; viz SUROVA DATA.)
+
+==============================================================================
+  ANALYZA
+==============================================================================
+
+  1. Dispatch jadro je skutecne rychlejsi nez z80ex.
+     Pri fer srovnani (jen opcode, zadna obsluha preruseni na obou
+     stranach) dosahuje cpu-z80 1123 MHz vs z80ex 1072 MHz - asi o 5 %
+     rychleji na O2, vic na O3. Computed-goto dispatch a rucne psane
+     handlery delaji svou praci.
+
+  2. Batch je nejrychlejsi, ale cycle-accurate emulator ho pouzit nemuze.
+     2822 MHz / 2.63x je realne, ale vyzaduje provadet mnoho T-stavu bez
+     navratu do hostitele - neslucitelne s mid-instruction synchronizaci
+     periferii. Ber to jako horni mez, ne jako cislo, ktere realny
+     emulator MZ-800/700/1500 dostane.
+
+  3. Plny per-step (z80_step) je POMALEJSI nez z80ex_step - a to se ceka,
+     protoze dela vic.
+     z80_step provadi kazdou instrukci: pre-instruction interrupt check,
+     opcode, post-step hook a post-instruction interrupt check. z80ex_step
+     provadi jen opcode a prijeti preruseni necha na vlastnim kodu
+     consumera. Takze srovnani "830 vs 1072" neni stejne-za-stejne:
+     cpu-z80 dela integrovanou praci, kterou z80ex benchmark smycka
+     proste vynechava. Radek dispatch jadra (ktery tu integrovanou praci
+     odebere) ukazuje, ze samotne jadro je rychlejsi.
+
+  4. RAM fast-path potrebuje DRAHY callback, aby se vyplatil.
+     V tomto microbenchmarku je memory callback trivialni (return
+     ram[addr]) a kompilator ho inlinuje. Fast-path pak jen prida vlastni
+     kontroly (enabled / page lookup / NULL / latch) bez ceho usetrit,
+     takze je tu pomalejsi (627 MHz). Jeho ucel je realny emulator, kde
+     callback dekoduje banking, mapping a contended timing - tam je
+     obejiti callbacku pro cistou RAM cisty zisk. Tento microbenchmark
+     ten prinos ukazat nemuze; nectete 627 MHz jako realnou hodnotu
+     fast-pathe.
+
+  Per-step cena je zamerny trade-off, ne vada:
+  - Per-step je pomalejsi nez BATCH, protoze cycle-accurate synchronizace
+    periferii nuti vracet se do hostitele po kazde instrukci. Vzdavas se
+    batch zrychleni 2.6x vymenou za presne mid-instruction casovani -
+    to je dan za presnost.
+  - Per-step je mirne pomalejsi nez z80ex_step, protoze z80_step navic
+    dela interrupt check a post-step hook kazdou instrukci - praci, kterou
+    z80ex necha na consumerovi. To je dan za integrovanou funkcnost.
+  Podstatne: samotne presne dispatch jadro je naopak RYCHLEJSI nez z80ex
+  (viz radek "dispatch jadro"). Presnost cpu-z80 NEZpomaluje; per-step cena
+  plati za integrovanou funkcnost a za moznost byt cycle-accurate, ne za
+  presnost instrukcni sady.
+
+  Zaver: vyhody cpu-z80 pro realny emulator jsou presnost (LD A,I/R bug,
+  Q registr, per-M-cycle T-staty, sada callbacku), MIT licence, maly rucne
+  psany zdroj, dispatch jadro mirne rychlejsi nez z80ex, a - na hostech
+  s drahou pametovou mapou - volitelny RAM fast-path. Surova per-step
+  propustnost proti z80ex je zhruba nerozhodna; headline "2.8x" plati jen
+  pro batch.
+
+==============================================================================
+  PRESNOST
+==============================================================================
+
+  Kazdy emulator i kazdy rezim provadeni cpu-z80 dava STEJNY pocet cyklu:
+
+    z80ex                       2 214 609 436   (reference)
+    cpu-z80 batch               2 214 609 436
+    cpu-z80 per-step            2 214 609 436
+    cpu-z80 per-step+fastpath   2 214 609 436
+
+  Vlastnosti cpu-z80 navic oproti z80ex: LD A,I/R HW bug, Q registr,
+  RETI/INTACK/EI callbacky, post-step callback, wait staty, op_tstate
+  tracking, multi-instance, user_data, z80_get/set_reg a event callbacky
+  di/im/halt/nmi/iff_change/cpu_ctrl_event/call/ret.
+
+  ZEXALL (67/67) prochazi pres OBE jadra - batch (z80_execute) i per-step
+  (z80_step, tests-zexall -DZEXALL_PER_STEP) - se shodnymi 3 785 306 090
+  T-stavy. Dukaz, ze obe jadra jsou bit-identicka na kompletni
+  dokumentovane + nedokumentovane instrukcni sade.
+
+==============================================================================
+  SUROVA DATA
+==============================================================================
+
+  --- O2, 3 behy (MHz) ---
+  z80ex-mz800:        1084.0  1062.2  1070.4
+  cpu-z80 batch:      2835.6  2803.3  2828.4
+  cpu-z80 dispatch:   1125.3  1116.8  1128.2
+  cpu-z80 per-step:    869.8   750.2   869.5
+  cpu-z80 step+fp:     626.1   629.7   625.1
+
+  --- O3, 2 behy (MHz) ---
+  z80ex-mz800:        1095.3  1099.1
+  cpu-z80 batch:      2842.9  2814.0
+  cpu-z80 dispatch:   1160.7  1171.8
+  cpu-z80 per-step:    870.2   879.5
+  cpu-z80 step+fp:     683.7   677.9
+
+  Reprodukce: cd bench && make compare           (vsechny cpu-z80 rezimy)
+              make bench_z80ex_mz800.exe          (vyzaduje z80ex v ../tmp/)
+
+==============================================================================
+  HISTORIE VERZI - DOPAD NA VYKON
+==============================================================================
+
+  v0.2.x   Jen batch jadro (z80_execute). Cislo "~2.8x vs z80ex" ve
+           starsich docs je srovnani batch-vs-z80ex-per-step. Patch verze
+           pridaly event callbacky (NULL by default, zanedbatelna cena) a
+           HALT-PC presnostni fix - zadna meritelna regrese.
+
+  v0.3.0   Per-step jadro (z80_step) vyclenene pro cycle-accurate hosty a
+           volitelny RAM fast-path. Bit-identicke (pocet cyklu i ZEXALL
+           nezmeneny pres obe jadra). V teto verzi byl take per-step vs
+           batch rozdil zmeren a poctive zdokumentovan: batch je ~2.6x
+           z80ex, dispatch jadro ~1.05x, a plny per-step je pod z80ex,
+           protoze z80_step integruje obsluhu preruseni + post-step, kterou
+           z80ex_step necha na volajicim.
+
+  v0.3.1   Bugfix: EI-delay v per-step jadre (gateovano compile-time, batch
+           beze zmeny). Bez dopadu na vykon - per-step cesta navic usetri
+           jeden zapis na krok. Pocet cyklu i ZEXALL nezmeneny.

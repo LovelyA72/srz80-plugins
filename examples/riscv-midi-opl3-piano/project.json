@@ -1,0 +1,123 @@
+{
+  "cards": [
+    {
+      "base": "0x4000",
+      "name": "Work RAM",
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x4000",
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "image": "piano.rom",
+      "name": "Piano firmware ROM",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "rv.memory"
+    },
+    {
+      "clock": 0,
+      "name": "MIDI piano controller",
+      "plugin": "riscv",
+      "reset_vector": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": 268435456,
+      "clock": 0,
+      "config": {
+        "chip_clock_hz": 14318180,
+        "sample_rate": 44100,
+        "stream_name": "RV32I OPL3 Piano"
+      },
+      "name": "OPL3 piano 1",
+      "plugin": "ymf262",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 4,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000100",
+      "config": {
+        "chip_clock_hz": 14318180,
+        "sample_rate": 44100,
+        "stream_name": "RV32I OPL3 Piano 2"
+      },
+      "name": "OPL3 piano 2",
+      "plugin": "ymf262",
+      "priority": 0,
+      "size": 4,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000200",
+      "config": {
+        "chip_clock_hz": 14318180,
+        "sample_rate": 44100,
+        "stream_name": "RV32I OPL3 Piano 3"
+      },
+      "name": "OPL3 piano 3",
+      "plugin": "ymf262",
+      "priority": 0,
+      "size": 4,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000300",
+      "config": {
+        "chip_clock_hz": 14318180,
+        "sample_rate": 44100,
+        "stream_name": "RV32I OPL3 Piano 4"
+      },
+      "name": "OPL3 piano 4",
+      "plugin": "ymf262",
+      "priority": 0,
+      "size": 4,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000400",
+      "config": {
+        "endpoint": "piano.rx",
+        "irq": "IRQ",
+        "irq_enable": false,
+        "rx_capacity": 256,
+        "rx_enable": true,
+        "tx_capacity": 4096,
+        "tx_enable": false
+      },
+      "name": "Piano MIDI input",
+      "plugin": "midi",
+      "priority": 0,
+      "size": 4,
+      "space": "rv.memory"
+    }
+  ],
+  "clocks": [
+    300000,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "An RV32I firmware turns MIDI channels 1-9 and 11-16 into a 72-voice two-operator piano across four YMF262 OPL3 chips while preserving the lowest voice during voice stealing.",
+    "title": "RV32I MIDI OPL3 Piano"
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFFFF",
+      "name": "rv.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "midi": "..\\..\\..\\..\\Users\\Kashouryo\\Downloads\\ラブライブ - 僕たちはひとつの光 （完整版扒带）(1).mid",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

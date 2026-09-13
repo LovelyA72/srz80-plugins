@@ -1,0 +1,68 @@
+{
+  "cards": [
+    {
+      "base": 0,
+      "clock": 0,
+      "image": "dac.rom",
+      "plugin": "rom",
+      "priority": 10,
+      "reset_vector": 0,
+      "size": 0,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": "0xD0",
+      "config": {
+        "stream_name": "Z80 FIFO PCM"
+      },
+      "plugin": "dac",
+      "priority": 0,
+      "size": 5,
+      "space": "cpu0.io"
+    },
+    {
+      "clock": 0,
+      "config": {
+        "clock_hz_hint": 3686400,
+        "io_space": "cpu0.io"
+      },
+      "plugin": "z80",
+      "reset_vector": 0,
+      "space": "cpu0.memory"
+    }
+  ],
+  "clocks": [
+    500000,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Z80 continuously refills the PCM DAC's 32-byte FIFO with a short unsigned-PCM waveform.",
+    "title": "Z80 PCM DAC FIFO"
+  },
+  "name": "dac",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    },
+    {
+      "maximum": "0x00FF",
+      "name": "cpu0.io",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "dac.asm"
+  },
+  "version": 2
+}

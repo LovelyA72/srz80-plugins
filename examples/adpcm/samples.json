@@ -1,0 +1,37 @@
+[
+  {
+    "mode": 0,
+    "start": 0,
+    "samples": 48000,
+    "rate": 16000,
+    "bytes": 6000
+  },
+  {
+    "mode": 1,
+    "start": 6000,
+    "samples": 48000,
+    "rate": 16000,
+    "bytes": 24000
+  },
+  {
+    "mode": 2,
+    "start": 30000,
+    "samples": 48000,
+    "rate": 16000,
+    "bytes": 48000
+  },
+  {
+    "mode": 3,
+    "start": 78000,
+    "samples": 48000,
+    "rate": 16000,
+    "bytes": 24004
+  },
+  {
+    "mode": 4,
+    "start": 102004,
+    "samples": 48000,
+    "rate": 16000,
+    "bytes": 48000
+  }
+]
