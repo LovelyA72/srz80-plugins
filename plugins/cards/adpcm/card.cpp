@@ -37,18 +37,26 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             config->base > UINT64_MAX - (Device::register_count - 1)) return SRH_INVALID;
         *out = nullptr;
         std::string name = "ADPCM";
+        uint32_t sample_rate = 44'100;
         if (srz80::sdk::has_field(config, &SrhConfig::config_json) && config->config_json) {
             const auto json = nlohmann::json::parse(config->config_json, config->config_json + config->config_json_size,
                                                    nullptr, false);
             if (!json.is_object()) return SRH_INVALID;
             for (auto it = json.begin(); it != json.end(); ++it)
-                if (it.key() != "stream_name") return SRH_INVALID;
+                if (it.key() != "stream_name" && it.key() != "sample_rate") return SRH_INVALID;
             if (json.contains("stream_name")) {
                 if (!json["stream_name"].is_string()) return SRH_INVALID;
                 name = json["stream_name"].get<std::string>();
             }
+            if (json.contains("sample_rate")) {
+                if (!json["sample_rate"].is_number_unsigned()) return SRH_INVALID;
+                const auto value = json["sample_rate"].get<uint64_t>();
+                if (value > UINT32_MAX) return SRH_INVALID;
+                sample_rate = static_cast<uint32_t>(value);
+            }
         }
-        if (name.empty() || name.size() > 256 || name.find('\0') != std::string::npos) return SRH_INVALID;
+        if (name.empty() || name.size() > 256 || name.find('\0') != std::string::npos ||
+            sample_rate < 8'000 || sample_rate > 192'000) return SRH_INVALID;
         const uint8_t *image = config->image;
         uint64_t size = config->image_size;
         if (srz80::sdk::has_field(config, &SrhConfig::image_count) && config->image_count) {
@@ -60,16 +68,15 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         if (!host->query || host->query(host->context, "host.audio.v1", &extension) != SRH_OK || !extension)
             return SRH_UNAVAILABLE;
         const auto *audio = static_cast<const SrhHostAudioV1 *>(extension);
-        if (!srz80::sdk::valid(audio) || !audio->register_source || audio->sample_rate < 8000 ||
-            audio->sample_rate > 192000) return SRH_INVALID;
+        if (!srz80::sdk::valid(audio) || !audio->register_source) return SRH_INVALID;
         auto card = std::make_unique<Card>();
-        card->base = config->base; card->device.output_rate = audio->sample_rate;
+        card->base = config->base; card->device.output_rate = sample_rate;
         if (size) std::memcpy(card->device.ram.data(), image, size_t(size));
         SrhMapping mapping{SRH_INIT(SrhMapping), config->space, config->base,
             config->base + Device::register_count - 1, config->priority, card.get(), read, write, peek, nullptr};
         auto status = host->map(host->context, owner, &mapping, &card->mapping);
         if (status != SRH_OK) return status;
-        status = audio->register_source(audio->context, owner, audio->sample_rate, 2, SRH_AUDIO_S16_STEREO,
+        status = audio->register_source(audio->context, owner, sample_rate, 2, SRH_AUDIO_S16_STEREO,
                                          name.c_str(), render, card.get(), &card->stream);
         if (status != SRH_OK) return status;
         *out = card.release(); return SRH_OK;
@@ -133,7 +140,8 @@ SrhStatus SRH_CALL load(void *c, const uint8_t *buffer, uint64_t size) {
 const SrhImageSlotDescriptor slots[]{{SRH_INIT(SrhImageSlotDescriptor), "Sample RAM bank (raw, optional, up to 2 MiB)"}};
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "ADPCM",
     "Single mono voice: DPCM, PCM4/8, IMA and G.711 mu-law; private 2 MiB RAM",
-    0x10000000, Device::register_count, 0, 0, 0, 0, R"({"stream_name":"ADPCM"})", nullptr, nullptr, slots, 1};
+    0x10000000, Device::register_count, 0, 0, 0, 0,
+    R"({"sample_rate":44100,"stream_name":"ADPCM"})", nullptr, nullptr, slots, 1};
 const SrhPlugin api{SRH_INIT(SrhPlugin), "adpcm", create, destroy, reset, count, info, get, set,
                     save, load, &descriptor, nullptr, nullptr};
 }

@@ -177,7 +177,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         const void *extension = nullptr;
         if (!host->query || host->query(host->context, "host.audio.v1", &extension) != SRH_OK || !extension) return SRH_UNAVAILABLE;
         const auto *audio = static_cast<const SrhHostAudioV1 *>(extension);
-        if (!srz80::sdk::valid(audio) || !audio->register_source || settings.sample_rate != audio->sample_rate) return SRH_INVALID;
+        if (!srz80::sdk::valid(audio) || !audio->register_source) return SRH_INVALID;
         auto tone = std::make_unique<Tone>();
         tone->owner = owner; tone->space = config->space; tone->base = config->base; tone->clock_hz = settings.clock_hz; tone->sample_rate = settings.sample_rate;
         SrhMapping mapping{SRH_INIT(SrhMapping), config->space, config->base,

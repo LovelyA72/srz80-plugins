@@ -191,7 +191,6 @@ struct SidCard {
     uint64_t base = 0;
     uint32_t chip_clock_hz = kDefaultChipClockHz;
     uint32_t sample_rate = kDefaultSampleRate;
-    uint32_t host_sample_rate = kDefaultSampleRate;
     int32_t priority = 0;
     reSIDfp::ChipModel model = reSIDfp::MOS8580;
     Backend backend = Backend::resid;
@@ -338,8 +337,6 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         const auto audio = static_cast<const SrhHostAudioV1 *>(extension);
         if (!srz80::sdk::valid(audio) || !audio->register_source)
             return SRH_UNAVAILABLE;
-        if (settings.sample_rate != audio->sample_rate)
-            return SRH_INVALID;
 
         auto card = std::make_unique<SidCard>();
         card->host = host;
@@ -348,7 +345,6 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         card->base = config->base;
         card->chip_clock_hz = settings.chip_clock_hz;
         card->sample_rate = settings.sample_rate;
-        card->host_sample_rate = audio->sample_rate;
         card->priority = config->priority;
         card->model = settings.model;
         card->backend = configured_backend(host);
@@ -414,7 +410,7 @@ SrhStatus SRH_CALL info(void *, uint32_t index, SrhProperty *out) {
         return SRH_INVALID;
     static const char *config_names[] = {"base", "chip_clock_hz", "sample_rate", "model"};
     static const char *config_descriptions[] = {"First mapped SID register", "SID input clock",
-                                                "Host output rate", "SID chip model"};
+                                                "Native output rate", "SID chip model"};
     if (index < kConfigCount) {
         const bool model = index == 3;
         *out = {SRH_INIT(SrhProperty), config_names[index], "SID", config_descriptions[index],
@@ -484,7 +480,7 @@ SrhStatus set_impl(void *context, uint32_t index, const SrhValue *in) {
     }
     if (index == 2) {
         if (in->unsigned_value < kMinSampleRate || in->unsigned_value > kMaxSampleRate ||
-            in->unsigned_value != card.host_sample_rate || in->unsigned_value > card.chip_clock_hz)
+            in->unsigned_value != card.sample_rate || in->unsigned_value > card.chip_clock_hz)
             return SRH_INVALID;
         card.sample_rate = static_cast<uint32_t>(in->unsigned_value);
         card.change_engine();
