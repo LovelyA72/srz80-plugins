@@ -1,0 +1,82 @@
+{
+  "cards": [
+    {
+      "base": 0,
+      "config": {
+        "ram_banks": 2,
+        "ram_range": [40960, 49151],
+        "rom_range": [0, 32767]
+      },
+      "image": "mbc5.rom",
+      "plugin": "mbc5",
+      "priority": 10,
+      "size": 32768,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 49152,
+      "plugin": "ram",
+      "priority": 0,
+      "size": 8192,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 57344,
+      "image": "static.rom",
+      "plugin": "rom",
+      "priority": 0,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 128,
+      "config": {
+        "base": 128,
+        "endpoint": "uart0.rx",
+        "transcript_capacity": 65536
+      },
+      "plugin": "uart_console",
+      "priority": 0,
+      "size": 2,
+      "space": "cpu0.io"
+    },
+    {
+      "clock": 0,
+      "config": {
+        "clock_hz_hint": 3686400,
+        "io_space": "cpu0.io"
+      },
+      "plugin": "z80",
+      "reset_vector": 0,
+      "space": "cpu0.memory"
+    }
+  ],
+  "clocks": [3686400, 0, 0],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "Z80 demonstration of MBC5 ROM banking, external RAM banking, ordinary RAM and ROM cards, and UART output.",
+    "title": "Z80 / configurable MBC5 / UART"
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    },
+    {
+      "maximum": "0x00FF",
+      "name": "cpu0.io",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "bank0.asm"
+  },
+  "version": 2
+}
