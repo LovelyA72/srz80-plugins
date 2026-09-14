@@ -39,3 +39,17 @@ address:
 `sample_space` is optional. When omitted, it uses the X1-010 register mapping's
 space. `sample_base` identifies the first byte of the shared sample window; the
 card does not map or allocate a second copy of that 1 MiB.
+
+## Third-party core and license
+
+`x1_010/x1_010.cpp` and `x1_010/x1_010.hpp` are modified copies of the
+[vgsound_emu X1-010 core](https://gitlab.com/cam900/vgsound_emu/) from
+`tildearrow/furnace/extern/vgsound_emu-modified/vgsound_emu/src/x1_010`.
+The original core is copyright (C) 2022-present cam900 and contributors and is
+licensed under the Zlib License.
+
+SRZ80's changes add explicit, little-endian save/load-state serialization,
+state-size declarations, and flag packing helpers so the core can participate
+in the card ABI's state persistence. These altered source files are not the
+original vgsound_emu sources; their Zlib license notices are retained in the
+files.
