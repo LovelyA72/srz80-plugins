@@ -4,6 +4,9 @@ build/
 # Scratch space
 scratch/
 
+# Agents are allowed but keep them to contributors themselves
+AGENTS.md
+
 # --- C/C++ ---
 *.o
 *.obj
