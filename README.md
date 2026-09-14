@@ -34,14 +34,19 @@ Exact Windows example, assuming the SRZ80 distribution contains `srz80.exe`, its
 1. Make an isolated test folder:
 
 ```powershell
-Copy-Item C:\path\to\srz80-dist C:\temp\card-test -Recurse
-Copy-Item C:\path\to\my_cool_card.dll C:\temp\card-test\plugins\
-New-Item C:\temp\card-test\case-valid -ItemType Directory
+New-Item .\scratch -ItemType Directory -Force
+Copy-Item .\srz80-dist .\scratch\card-test -Recurse
+Copy-Item .\my_cool_card.dll .\scratch\card-test\plugins\
+New-Item .\scratch\card-test\case-valid -ItemType Directory
 ```
+
+Run these commands from the repository root, with `srz80-dist` and
+`my_cool_card.dll` there. The copied distribution becomes `scratch/card-test`,
+which is ignored by Git.
 
 2. Find the card’s plugin ID and required settings from its source or documentation. The project’s `"plugin"` value must equal the card’s `SrhPlugin::id`, not necessarily its DLL filename.
 
-3. Create `C:\temp\card-test\case-valid\project.json`. This minimal example tests a card named `my_cool_card` that maps 16 bytes of I/O at `0xC0`:
+3. Create `scratch\card-test\case-valid\project.json`. This minimal example tests a card named `my_cool_card` that maps 16 bytes of I/O at `0xC0`:
 
 ```json
 {
@@ -76,7 +81,7 @@ Adapt `space`, `base`, `size`, `clock`, `config`, and `image` to the card’s AB
 4. Run the headless executable from its own directory:
 
 ```powershell
-Set-Location C:\temp\card-test
+Set-Location .\scratch\card-test
 .\srz80.exe .\case-valid\project.json
 $LASTEXITCODE
 ```
