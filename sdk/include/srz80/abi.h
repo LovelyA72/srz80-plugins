@@ -84,6 +84,13 @@ typedef struct SrhConfig {
        interleaving, etc.); the host does not merge them. */
     const SrhImagePart *images;
     uint32_t image_count;
+    /* Optional create() diagnostic output. Cards must check struct_size before
+       reading these fields. The host initializes the buffer to an empty string
+       before calling create(). A card may replace it with a brief UTF-8 reason
+       when create() fails. Capacity includes the trailing NUL; cards must
+       always terminate non-empty output. */
+    char *error_message;
+    uint32_t error_message_capacity;
 } SrhConfig;
 typedef struct SrhValue {
     SRH_HEADER;
