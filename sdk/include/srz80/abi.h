@@ -234,9 +234,11 @@ typedef struct SrhHostVideoV1 {
     SrhStatus(SRH_CALL *set_video_timing)(void *, SrhHandle, SrhVideoTimingQuery, void *);
 } SrhHostVideoV1;
 
-/* Host audio source registration.  Audio callbacks are invoked by the host's
-   simulation thread, never by a device callback.  The interleaved buffer is
-   owned by the host and is valid only for the duration of the call. */
+/* Host audio source registration. Each source declares its native sample rate;
+   the host resamples it to sample_rate before mixing. Audio callbacks are
+   invoked by the host's simulation thread, never by a device callback.
+   start_frame and frames use the source's native-rate timeline. The interleaved
+   buffer is owned by the host and is valid only for the duration of the call. */
 typedef uint32_t SrhAudioFormat;
 enum { SRH_AUDIO_S16_STEREO = 1 };
 typedef SrhStatus(SRH_CALL *SrhAudioRender)(void *, uint64_t, uint32_t, int16_t *);

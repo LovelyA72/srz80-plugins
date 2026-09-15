@@ -93,21 +93,4 @@ class Engine {
     std::array<uint32_t, 8> lfo_phase_steps_{};
 };
 
-class LinearResampler {
-  public:
-    LinearResampler(Engine &engine, uint32_t chip_clock_hz, uint32_t output_rate);
-
-    void reset();
-    void render(uint32_t frames, int16_t *interleaved);
-    std::vector<uint8_t> save_state() const;
-    bool load_state(std::span<const uint8_t> state);
-
-  private:
-    Engine &engine_;
-    uint64_t step_ = 0;
-    uint64_t phase_ = 0;
-    std::array<int16_t, 2> current_{};
-    std::array<int16_t, 2> next_{};
-};
-
 } // namespace srz80::ymw258

@@ -4,6 +4,21 @@ This repo hosts plugins for the SRZ80.
 
 Want to get your own plugin included? Open a pr!
 
+## Building
+
+On Linux, build Windows plugins with the MinGW-w64 `x86_64-w64-mingw32` GCC/G++
+cross compiler:
+
+```sh
+cmake --preset mingwcross-debug
+cmake --build --preset mingwcross-debug -j 4
+```
+
+This writes Windows plugin and tool DLLs to `build/mingwcross-debug/plugins` and
+`build/mingwcross-debug/tools`. Use `mingwcross-release` for a stripped release
+build. Copy these directories into the matching SRZ80 Windows distribution's
+`bin/` directory; that distribution supplies the MinGW runtime DLLs.
+
 ## An agent designing a card?
 Hello from a human! Below is an instruction for you on how to design and test a card, written by a non-human:
 ```

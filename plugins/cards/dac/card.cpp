@@ -13,19 +13,30 @@ constexpr uint32_t kFifoCapacity = 32;
 constexpr uint32_t kDefaultRate = 22'050;
 constexpr uint64_t kPhaseOne = uint64_t{1} << 32;
 
-struct Settings { std::string stream_name = "PCM DAC"; };
+struct Settings {
+    uint32_t sample_rate = 44'100;
+    std::string stream_name = "PCM DAC";
+};
 
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!config || !srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json)
         return true;
     const auto json = nlohmann::json::parse(config->config_json,
         config->config_json + config->config_json_size, nullptr, false);
-    if (!json.is_object() || json.size() > 1 || (json.size() && !json.contains("stream_name")) ||
-        (json.contains("stream_name") && !json["stream_name"].is_string()))
-        return false;
+    if (!json.is_object()) return false;
+    for (auto it = json.begin(); it != json.end(); ++it)
+        if (it.key() != "stream_name" && it.key() != "sample_rate") return false;
+    if (json.contains("stream_name") && !json["stream_name"].is_string()) return false;
+    if (json.contains("sample_rate") && !json["sample_rate"].is_number_unsigned()) return false;
     if (json.contains("stream_name")) settings.stream_name = json["stream_name"].get<std::string>();
+    if (json.contains("sample_rate")) {
+        const auto value = json["sample_rate"].get<uint64_t>();
+        if (value > UINT32_MAX) return false;
+        settings.sample_rate = static_cast<uint32_t>(value);
+    }
     return !settings.stream_name.empty() && settings.stream_name.size() <= 256 &&
-           settings.stream_name.find('\0') == std::string::npos;
+           settings.stream_name.find('\0') == std::string::npos &&
+           settings.sample_rate >= 8'000 && settings.sample_rate <= 192'000;
 }
 
 struct Dac {
@@ -159,16 +170,16 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         if (!host->query || host->query(host->context, "host.audio.v1", &extension) != SRH_OK || !extension)
             return SRH_UNAVAILABLE;
         const auto *audio = static_cast<const SrhHostAudioV1 *>(extension);
-        if (!srz80::sdk::valid(audio) || !audio->register_source || !audio->sample_rate ||
+        if (!srz80::sdk::valid(audio) || !audio->register_source ||
             audio->channels != 2 || audio->format != SRH_AUDIO_S16_STEREO)
             return SRH_INVALID;
         auto card = std::make_unique<Card>();
-        card->base = config->base; card->dac.output_rate = audio->sample_rate; card->dac.reset();
+        card->base = config->base; card->dac.output_rate = settings.sample_rate; card->dac.reset();
         SrhMapping mapping{SRH_INIT(SrhMapping), config->space, config->base, config->base + 4,
             config->priority, card.get(), read, write, peek, nullptr};
         auto status = host->map(host->context, owner, &mapping, &card->mapping);
         if (status != SRH_OK) return status;
-        status = audio->register_source(audio->context, owner, audio->sample_rate, 2,
+        status = audio->register_source(audio->context, owner, settings.sample_rate, 2,
             SRH_AUDIO_S16_STEREO, settings.stream_name.c_str(), render, card.get(), &card->stream);
         if (status != SRH_OK) return status;
         *out = card.release();
@@ -243,7 +254,8 @@ SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t siz
 
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "PCM DAC",
     "8-bit unsigned PCM DAC with direct and programmable-rate 32-byte FIFO modes",
-    0xD0, kRegisterCount, 0, 0, 0, 0, R"({"stream_name":"PCM DAC"})", nullptr, nullptr,
+    0xD0, kRegisterCount, 0, 0, 0, 0,
+    R"({"sample_rate":44100,"stream_name":"PCM DAC"})", nullptr, nullptr,
     nullptr, 0};
 const SrhPlugin api{SRH_INIT(SrhPlugin), "dac", create, destroy, reset, property_count, property_info,
                     property_get, property_set, save_state, load_state, &descriptor, nullptr, nullptr};

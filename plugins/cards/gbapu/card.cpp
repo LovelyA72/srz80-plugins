@@ -165,7 +165,6 @@ struct GbApu {
     SrhHandle owner = 0, space = 0, mapping = 0, stream = 0;
     uint64_t base = 0;
     uint32_t sample_rate = gbapu_default_sample_rate;
-    uint32_t host_sample_rate = gbapu_default_sample_rate;
     int32_t priority = 0;
     GB_model_t model = GB_MODEL_DMG_B;
     GB_highpass_mode_t highpass_mode = GB_HIGHPASS_OFF;
@@ -241,15 +240,12 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         auto audio = static_cast<const SrhHostAudioV1 *>(extension);
         if (!srz80::sdk::valid(audio) || !audio->register_source)
             return SRH_UNAVAILABLE;
-        if (settings.sample_rate != audio->sample_rate)
-            return SRH_INVALID;
         auto apu = std::make_unique<GbApu>();
         apu->host = host;
         apu->owner = owner;
         apu->space = config->space;
         apu->base = config->base;
         apu->sample_rate = settings.sample_rate;
-        apu->host_sample_rate = audio->sample_rate;
         apu->priority = config->priority;
         apu->model = settings.model;
         apu->highpass_mode = settings.highpass_mode;
@@ -289,7 +285,7 @@ SrhStatus SRH_CALL info(void *, uint32_t index, SrhProperty *out) {
     if (!srz80::sdk::valid(out) || index >= 4)
         return SRH_INVALID;
     static const char *names[] = {"base", "sample_rate", "model", "highpass_mode"};
-    static const char *descriptions[] = {"First mapped APU register (NR10)", "Host output rate",
+    static const char *descriptions[] = {"First mapped APU register (NR10)", "Native output rate",
                                          "GB APU model (DMG, CGB, or AGB)", "Output high-pass filter"};
     static const uint32_t kinds[] = {SRH_UNSIGNED, SRH_UNSIGNED, SRH_ENUM, SRH_ENUM};
     static const uint32_t bits[] = {16, 32, 0, 0};
@@ -351,11 +347,8 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
         return SRH_OK;
     }
     case 1:
-        // The host audio pipeline is fixed-rate; source sample rates must match
-        // the host. Keep the property editable for consistency, but reject
-        // values the audio host cannot actually render.
         if (in->unsigned_value < 8000 || in->unsigned_value > 192000 ||
-            in->unsigned_value != apu.host_sample_rate)
+            in->unsigned_value != apu.sample_rate)
             return SRH_INVALID;
         apu.sample_rate = static_cast<uint32_t>(in->unsigned_value);
         GB_set_sample_rate(apu.gb.get(), apu.sample_rate);

@@ -170,7 +170,6 @@ struct Ymf262 {
     int32_t priority = 0;
     uint32_t chip_clock_hz = 0;
     uint32_t sample_rate = 0;
-    uint32_t host_sample_rate = 0;
     Backend backend = Backend::nuked;
     uint8_t address[2]{};
     uint8_t registers[kRegisterCount]{};
@@ -332,8 +331,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             !extension)
             return SRH_UNAVAILABLE;
         const auto audio = static_cast<const SrhHostAudioV1 *>(extension);
-        if (!srz80::sdk::valid(audio) || !audio->register_source ||
-            settings.sample_rate != audio->sample_rate)
+        if (!srz80::sdk::valid(audio) || !audio->register_source)
             return SRH_INVALID;
 
         auto card = std::make_unique<Ymf262>();
@@ -343,7 +341,6 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         card->priority = config->priority;
         card->chip_clock_hz = settings.chip_clock_hz;
         card->sample_rate = settings.sample_rate;
-        card->host_sample_rate = audio->sample_rate;
         card->backend = configured_backend(host);
         card->reset();
 
@@ -402,7 +399,7 @@ SrhStatus SRH_CALL info(void *, uint32_t index, SrhProperty *out) {
     if (!srz80::sdk::valid(out) || index >= kPropertyCount)
         return SRH_INVALID;
     static const char *names[] = {"base", "chip_clock_hz", "sample_rate"};
-    static const char *descriptions[] = {"First mapped I/O port", "YMF262 input clock", "Host output rate"};
+    static const char *descriptions[] = {"First mapped I/O port", "YMF262 input clock", "Native output rate"};
     if (index < kConfigCount) {
         *out = {SRH_INIT(SrhProperty), names[index], "YMF262", descriptions[index], SRH_UNSIGNED,
                 index == 0 ? 16u : 32u, index == 0 ? 16u : 10u, 0, nullptr,

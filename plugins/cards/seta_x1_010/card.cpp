@@ -200,9 +200,6 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         if (!srz80::sdk::valid(audio) || !audio->register_source || audio->channels < 2 ||
             audio->format != SRH_AUDIO_S16_STEREO)
             return SRH_UNAVAILABLE;
-        if (settings.sample_rate != audio->sample_rate)
-            return SRH_INVALID;
-
         SrhHandle sample_space = config->space;
         if (!settings.sample_space.empty()) {
             extension = nullptr;

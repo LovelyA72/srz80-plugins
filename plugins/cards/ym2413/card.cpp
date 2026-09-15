@@ -206,8 +206,8 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             !extension)
             return SRH_UNAVAILABLE;
         auto audio = static_cast<const SrhHostAudioV1 *>(extension);
-        if (!srz80::sdk::valid(audio) || !audio->register_source || settings.sample_rate != audio->sample_rate)
-            return settings.sample_rate == audio->sample_rate ? SRH_UNAVAILABLE : SRH_INVALID;
+        if (!srz80::sdk::valid(audio) || !audio->register_source)
+            return SRH_UNAVAILABLE;
         auto ym = std::make_unique<Ym2413>();
         ym->host = host;
         ym->owner = owner;
@@ -249,7 +249,7 @@ SrhStatus SRH_CALL info(void *, uint32_t index, SrhProperty *out) {
         return SRH_INVALID;
     static const char *config_names[] = {"base", "chip_clock_hz", "sample_rate"};
     static const char *config_descriptions[] = {"First mapped I/O port", "YM2413 input clock",
-                                                "Host output rate"};
+                                                "Native output rate"};
     static const char *slot_names[] = {"Env", "Out", "Key", "Sus", "Freq", "State"};
     static const char *slot_descriptions[] = {"Envelope generator output",
                                               "Operator phase output",
