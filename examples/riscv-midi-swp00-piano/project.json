@@ -1,0 +1,131 @@
+{
+  "cards": [
+    {
+      "base": "0x4000",
+      "name": "Work RAM",
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x4000",
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "clock": 0,
+      "image": "piano-rv32imf.rom",
+      "name": "Piano firmware ROM",
+      "plugin": "rom",
+      "priority": 10,
+      "reset_vector": 0,
+      "size": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "clock": 0,
+      "name": "RISC-V RV32IMF",
+      "plugin": "riscv",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": 268435456,
+      "clock": 0,
+      "config": {
+        "chip_clock_hz": 33868800,
+        "stream_name": "MU50 SWP00 Piano"
+      },
+      "images": [
+        "xq057c0.ic18",
+        "xq058c0.ic19"
+      ],
+      "name": "Yamaha SWP00",
+      "plugin": "swp00",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 2048,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x20000000",
+      "image": "xr174c0.ic7",
+      "name": "MU50 v1.05 controller tables",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10001000",
+      "config": {
+        "base": 268439552,
+        "endpoint": "swp00-piano.uart",
+        "transcript_capacity": 65536
+      },
+      "name": "Instrument selector",
+      "plugin": "uart_console",
+      "priority": 0,
+      "size": 2,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10001100",
+      "config": {
+        "endpoint": "swp00-piano.midi",
+        "irq": "IRQ",
+        "irq_enable": false,
+        "rx_capacity": 4096,
+        "rx_enable": true,
+        "tx_enable": false
+      },
+      "name": "Piano MIDI input",
+      "plugin": "midi",
+      "priority": 0,
+      "size": 4,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10001200",
+      "clock": 0,
+      "name": "LCD1602",
+      "plugin": "lcd1602",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 2,
+      "space": "rv.memory"
+    }
+  ],
+  "clocks": [
+    4000000,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "32-voice MU50 GM1 receiver with UART program selection, MIDI input and LCD channel meters.",
+    "title": "RISC-V MIDI SWP00 Piano"
+  },
+  "name": "riscv-midi-swp00-piano",
+  "rack_info": {
+    "author": "LovelyA72",
+    "notes": "MU50 ROM-based GM1 piano; see README for synthesis limits.",
+    "thumbnail": "",
+    "version": "1.0"
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFFFF",
+      "name": "rv.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"swp00-piano.midi\",\"path\":\"/home/a72/Downloads/43410 - Snow Halation，XG标准精品MIDI，LoveLive!经典曲目.mid\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
