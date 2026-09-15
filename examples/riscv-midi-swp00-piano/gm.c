@@ -478,7 +478,9 @@ static void sysex(Gm *s) {
      * eight. (There is no checksum byte in this Yamaha message format.) */
     if (s->sysex_length == 8 && b[0] == 0x43 && (b[1] & 0xf0u) == 0x10 && b[2] == 0x4c) {
         if (b[3] == 0 && b[4] == 0 && b[5] == 0x7e && b[6] == 0) reset(s, 1);
-        else if (b[3] == 8 && b[4] < 16 && b[5] == 7) s->channels[b[4]].drum = b[6] != 0;
+        else if (b[3] == 8 && b[4] < 16 && b[5] == 7 &&
+                 (s->xg_mode || b[4] != 9))
+            s->channels[b[4]].drum = b[6] != 0;
         return;
     }
     /* Roland GS Reset selects the GM-compatible operating mode. This is the
@@ -527,7 +529,8 @@ void gm_byte(Gm *s, u8 byte) {
     if (kind == 0xc0) {
         GmChannel *c = &s->channels[channel];
         c->program = byte;
-        c->drum = c->bank_msb == 126 || c->bank_msb == 127;
+        c->drum = (!s->xg_mode && channel == 9) ||
+                  c->bank_msb == 126 || c->bank_msb == 127;
         return;
     }
     if (kind == 0xd0) { s->channels[channel].pressure = byte; update(s, channel, 4); return; }

@@ -50,7 +50,9 @@ After the two-second LCD intro:
 - The LCD shows channel 1's eight-character MU50 ROM voice name (for example,
   `GrandPno`), the current `GM`/`XG` operating mode in the last two cells of
   the first line, and activity for all 16 channels.
-- Channel 10 uses the MU50 XG Standard Kit's GM percussion assignments.
+- In GM mode, channel 10 is fixed to the MU50 XG Standard Kit's GM percussion
+  assignments. In XG mode, bank selection and part mode may switch it between
+  rhythm and melodic voices.
 
 ## Receiver behavior
 
