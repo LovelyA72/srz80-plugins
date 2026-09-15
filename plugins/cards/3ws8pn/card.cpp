@@ -6,10 +6,10 @@
 #include <string>
 namespace {
 using srz80::threews8pn::Device; struct Card{Device d;uint64_t base=0;SrhHandle mapping=0,stream=0;};
-SrhStatus access(void *c, uint64_t a, uint8_t *v, bool) {
+SrhStatus access(void *c, uint64_t a, uint8_t *v, bool peek) {
     auto &x = *static_cast<Card *>(c);
     if (!v || a < x.base || a - x.base >= Device::register_size) return SRH_INVALID;
-    *v = x.d.read(uint32_t(a - x.base));
+    *v = x.d.read(uint32_t(a - x.base), !peek);
     return SRH_OK;
 }
 SrhStatus SRH_CALL read(void*c,uint64_t a,uint8_t*v){return access(c,a,v,false);} SrhStatus SRH_CALL peek(void*c,uint64_t a,uint8_t*v){return access(c,a,v,true);} 
