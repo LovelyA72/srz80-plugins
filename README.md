@@ -20,48 +20,57 @@ build. Copy these directories into the matching SRZ80 Windows distribution's
 `bin/` directory; that distribution supplies the MinGW runtime DLLs.
 
 ## An agent designing a card?
-Hello from a human! Below is an instruction for you on how to design and test a card, written by a non-human:
-```
-Test the card strictly as a black-box integration plugin. You may use only the compiled SRZ80 distribution (including its executable-relative plugins/ directory and runtime DLLs), the supplied SDK headers, and the card’s compiled shared library/source. Do not build or modify SRZ80, link against private host libraries, or write a fake host ABI harness.
-1. Read sdk/include/srz80/abi.h and derive the card’s required configuration: plugin ID, address space, inclusive mapping range (base through base + size - 1), clock, image slots, JSON config, signals, and expected reset behavior.
-2. Work in an isolated temporary copy of the compiled SRZ80 distribution. Place the candidate card DLL/SO in the executable-relative plugins/ directory. Keep the host’s runtime dependencies beside the executable; plugin discovery is relative to the executable, not the working directory.
-3. Create minimal project-v2 JSON files beside any required ROM/image fixtures. Launch the headless executable as srz80 <project.json>. Capture exit code and stdout/stderr for every case.
-4. First verify discovery and loading with a valid minimal project. Confirm the reported loaded-card count includes the candidate card and that the host does not report an ABI, export, dependency, or configuration error.
-5. Exercise rejection paths independently: unknown plugin ID, missing required space, invalid/out-of-range base or size, overlapping mappings, malformed or wrong-type config JSON, missing/bad image, invalid signal name, and missing required optional host capability. Each must fail cleanly—no crash, hang, or partial successful load.
-6. Where the installed distribution includes CPU/RAM/ROM cards, build a tiny deterministic guest program that reads and writes every exposed register or mapped byte. Test:
-   - first and last mapped addresses;
-   - one byte immediately below and above the mapping;
-   - reset defaults and cold versus hot reset;
-   - read/write masks, FIFO/status/acknowledge semantics, and read-only/write-only behavior;
-   - clock-driven or scheduled behavior;
-   - signal assertion/release and image/config variations.
-     Use a UART, video surface, audio output, log, or other observable host behavior as the oracle. Run each project multiple times with a fixed seed and time_mode: "project"; outputs must match.
-7. Use the GUI executable only for observables the headless loader cannot expose: device properties, side-effect-free memory inspection, bus monitor, video/audio, manual reset, parking/replugging, and Save/Load State. Verify that inspection/peek does not consume data or alter device state.
-8. Record each test’s project JSON, command, expected observable result, actual result, and host log. Report limitations explicitly: without a test harness or a suitable guest CPU/RAM card, you can prove discovery, ABI compatibility, configuration validation, and startup/lifecycle behavior—but not directly invoke or exhaustively verify private callbacks, persistence buffers, or register semantics.
-Treat crashes, access violations, host hangs, non-deterministic results, or a successful load with an incorrect mapping/configuration as failures.
-```
 
-### But how?
-Good question, read on.
+Hello from a human! Below is an instruction for you on how to design and test a
+card, written by a non-human:
 
-Exact Windows example, assuming the SRZ80 distribution contains `srz80.exe`, its runtime DLLs, and stock plugins:
+The non-human has since discovered the public engine ABI, so the GUI is no
+longer part of the ritual.
 
-1. Make an isolated test folder:
+## Testing a card
 
-```powershell
-New-Item .\scratch -ItemType Directory -Force
-Copy-Item .\srz80-dist .\scratch\card-test -Recurse
-Copy-Item .\my_cool_card.dll .\scratch\card-test\plugins\
-New-Item .\scratch\card-test\case-valid -ItemType Directory
+Card tests use two public surfaces:
+
+- the headless `srz80` loader for discovery, ABI, configuration, and rejection
+  paths; and
+- the public engine ABI in `sdk/include/srz80/engine.h` for deterministic
+  simulation and register behaviour.
+
+Do not use `srz80_gui` for card validation. Do not modify SRZ80, link against
+private host libraries, or write a fake host ABI harness.
+
+### 1. Build an isolated distribution
+
+Work inside `scratch/`; it is git-ignored. Copy the compiled SRZ80 distribution
+and place the candidate plugin in the executable-relative `plugins/` directory:
+
+```sh
+mkdir -p scratch/card-test/plugins
+cp -a /path/to/srz80-dist/. scratch/card-test/
+cp build/gcc-debug/plugins/<your_plugin>.so scratch/card-test/plugins/
 ```
 
-Run these commands from the repository root, with `srz80-dist` and
-`my_cool_card.dll` there. The copied distribution becomes `scratch/card-test`,
-which is ignored by Git.
+Plugin discovery is relative to the loader executable, so run everything from
+`scratch/card-test`. The examples use POSIX shell; on Windows, use the
+equivalent `Copy-Item`/`srz80.exe` commands.
 
-2. Find the card’s plugin ID and required settings from its source or documentation. The project’s `"plugin"` value must equal the card’s `SrhPlugin::id`, not necessarily its DLL filename.
+### 2. Derive the card contract
 
-3. Create `scratch\card-test\case-valid\project.json`. This minimal example tests a card named `my_cool_card` that maps 16 bytes of I/O at `0xC0`:
+Read `sdk/include/srz80/abi.h` for the card ABI and
+`sdk/include/srz80/engine.h` for the engine ABI. From the card source or its
+documentation, determine:
+
+- `SrhPlugin::id` — the project `"plugin"` value, which is not necessarily the
+  DLL/SO filename;
+- the address space, `base`, and inclusive mapping range
+  (`base..base + size - 1`);
+- the clock index, image slots, JSON config keys, signal names, reset
+  behaviour, and save/load state format.
+
+### 3. Validate discovery and configuration with the CLI
+
+Create minimal project-v2 JSON files beside any required ROM/image fixtures. For
+example, a card with 16 bytes of I/O at `0xC0`:
 
 ```json
 {
@@ -91,41 +100,93 @@ which is ignored by Git.
 }
 ```
 
-Adapt `space`, `base`, `size`, `clock`, `config`, and `image` to the card’s ABI contract. If the card needs an image, add `"image": "firmware.bin"` and put that file next to `project.json`.
+Adapt `space`, `base`, `size`, `clock`, `config`, and `image` to the card's
+contract. Then run the headless loader:
 
-4. Run the headless executable from its own directory:
-
-```powershell
-Set-Location .\scratch\card-test
-.\srz80.exe .\case-valid\project.json
-$LASTEXITCODE
+```sh
+cd scratch/card-test
+./srz80 case-valid/project.json
+echo $?   # 0 = clean load, nonzero = validation/load failure
 ```
 
-Expected result: exit code `0`, output reporting one loaded card, and no plugin/ABI/configuration errors.
+A valid project must report the loaded-card count including the candidate card
+with no ABI, export, dependency, configuration, or mapping error.
 
-5. Run a deliberate invalid-config test. Copy the project and change the base to an invalid value—for an 8-bit I/O space, `0x100` is out of range:
+Exercise rejection paths independently:
 
-```powershell
-Copy-Item .\case-valid\project.json .\case-invalid-base.json
-(Get-Content .\case-invalid-base.json -Raw).Replace('"0xC0"', '"0x100"') |
-  Set-Content .\case-invalid-base.json -NoNewline
+- unknown plugin ID;
+- missing required space;
+- out-of-range or overlapping `base`/`size`;
+- malformed or wrong-type config JSON;
+- missing or bad image;
+- invalid signal name;
+- missing required host capability/extension.
 
-.\srz80.exe .\case-invalid-base.json
-$LASTEXITCODE
+Each must fail cleanly with a nonzero exit code and no crash, hang, or
+partial-success state.
+
+### 4. Test runtime behaviour with `engine.h`
+
+The headless loader initializes a project but does not execute the simulation.
+For register semantics, clock-driven behaviour, interrupts, and reset
+behaviour, build a small CLI harness against the public engine ABI:
+
+```sh
+g++ -std=c++20 -I sdk/include \
+    -L scratch/card-test -Wl,-rpath,$PWD/scratch/card-test \
+    scratch/your_card_test.cpp -lsrz80engine \
+    -o scratch/your_card_test
 ```
 
-Expected result: a clean validation/load failure, nonzero exit code, and no crash.
+The harness can use:
 
-6. To test register behavior, the project must also include a compatible CPU, RAM, and ROM card from the compiled distribution. Put a tiny ROM program in the project folder that writes known values to the card’s mapped I/O addresses and reports results through an existing observable device such as `uart_console`. Run it identically:
+- `srz80_engine_create` / `srz80_engine_destroy`;
+- `srz80_engine_load_project` /
+  `srz80_engine_load_project_json`;
+- `srz80_engine_find_space`, `srz80_engine_cards`, and
+  `srz80_engine_clocks`;
+- `srz80_engine_read` / `srz80_engine_write` for bus accesses;
+- `srz80_engine_resume` followed by
+  `srz80_engine_run(engine, ticks, UINT64_MAX)` to advance a known number of
+  clock events;
+- `srz80_engine_sample_signal`, `srz80_engine_drive_signal`,
+  `srz80_engine_subscribe_signal`, and `srz80_engine_release_signal`;
+- `srz80_engine_properties` and `srz80_engine_edit_property`;
+- `srz80_engine_text_query` for text/UART observables;
+- `srz80_engine_save_state` and `srz80_engine_load_state`;
+- `srz80_engine_now`, `srz80_engine_stop_reason`, and
+  `srz80_engine_run_state`.
 
-```powershell
-.\srz80.exe .\case-registers\project.json
-```
+Use `srz80_engine_candidate_create` and `srz80_engine_replace` when a load must
+not disturb an existing active rack.
 
-7. For GUI-only tests, launch the GUI from the distribution directory:
+For CPU/interrupt/full-system behaviour, add compatible CPU, RAM, and ROM cards,
+write a tiny deterministic guest program, run the engine, and read a memory
+address, signal, text endpoint, or provider as the oracle.
 
-```powershell
-.\srz80_gui.exe .\case-valid\project.json
-```
+### 5. What to exercise
 
-Use its Log panel to confirm loading, Bus Monitor to verify accesses, memory inspection to test `peek`, and reset/state controls to verify lifecycle behavior.
+For every exposed register or mapped byte, test:
+
+- the first and last mapped addresses;
+- one byte immediately below and above the mapping;
+- reset defaults, cold reset, and warm reset;
+- read/write masks, read-only/write-only behaviour, FIFO/status/acknowledge
+  semantics, and side effects;
+- clock-driven or scheduled behaviour;
+- signal assertion/release behaviour;
+- side-effect-free `peek` inspection.
+
+Run each project multiple times with a fixed `seed` and
+`"time_mode": "project"`; outputs must match across runs.
+
+### 6. Record failures and limitations
+
+For each test, record the project JSON, build command, test command, expected
+observable, actual observable, and complete host log. Report limitations
+explicitly: without a guest CPU/RAM/ROM or suitable provider, you may be able to
+prove discovery, ABI compatibility, configuration validation, and lifecycle
+behaviour, but not exhaustively verify private callbacks or register semantics.
+
+Treat crashes, access violations, host hangs, non-deterministic results, or a
+successful load with an incorrect mapping/configuration as failures.
