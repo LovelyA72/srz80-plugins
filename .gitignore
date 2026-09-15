@@ -1,6 +1,5 @@
 # Build trees.  Every preset writes under build/.
 build/
-build-mingw/
 
 # Scratch space
 scratch/
