@@ -296,7 +296,7 @@ const SrhCardDescriptor descriptor{
     "Audio",
     "X1-010",
     "Seta/Allumer X1-010 16-voice wavetable and PCM audio card",
-    0x20000,
+    0x2000,
     kRegisterWindow,
     0,
     0,
