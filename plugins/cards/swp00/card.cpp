@@ -92,8 +92,13 @@ SrhStatus SRH_CALL render(void *context, uint64_t, uint32_t frames, int16_t *int
     auto &engine = static_cast<Card *>(context)->engine;
     for (uint32_t frame = 0; frame < frames; ++frame) {
         const auto sample = engine.generate();
-        interleaved[static_cast<size_t>(frame) * 2] = sample[0];
-        interleaved[static_cast<size_t>(frame) * 2 + 1] = sample[1];
+        // Make the volume louder
+        interleaved[static_cast<size_t>(frame) * 2] = static_cast<int16_t>(std::clamp(
+            (static_cast<int32_t>(sample[0]) * 3)/2,
+            -32768, 32767));
+        interleaved[static_cast<size_t>(frame) * 2 + 1] = static_cast<int16_t>(std::clamp(
+            (static_cast<int32_t>(sample[1]) * 3)/2,
+            -32768, 32767));
     }
     return SRH_OK;
 }

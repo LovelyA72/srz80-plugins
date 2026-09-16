@@ -105,6 +105,17 @@
     "description": "32-voice MU50 GM1 receiver with UART program selection, MIDI input and LCD channel meters.",
     "title": "RISC-V MIDI SWP00 Piano"
   },
+  "mixer": {
+    "sources": [
+      {
+        "card": 3,
+        "muted": false,
+        "name": "MU50 SWP00 Piano",
+        "ordinal": 0,
+        "volume": 100
+      }
+    ]
+  },
   "name": "riscv-midi-swp00-piano",
   "rack_info": {
     "author": "LovelyA72",
@@ -124,7 +135,7 @@
   "time_mode": "project",
   "tool_state": {
     "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
-    "midi": "{\"endpoint\":\"swp00-piano.midi\",\"path\":\"/home/a72/Downloads/43410 - Snow Halation，XG标准精品MIDI，LoveLive!经典曲目.mid\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"swp00-piano.midi\",\"path\":\"\",\"schema\":1}",
     "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
   },
   "version": 2
