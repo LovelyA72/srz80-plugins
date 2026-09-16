@@ -4,6 +4,8 @@
 
 	Copyright holder(s): cam900
 	Seta/Allumer X1-010 Emulation core
+
+	Modified for attach to srz80_plugin by LovelyA72
 */
 
 #ifndef _VGSOUND_EMU_SRC_X1_010_HPP

@@ -1,4 +1,13 @@
 /*
+	License: Zlib
+	see https://gitlab.com/cam900/vgsound_emu/-/blob/main/LICENSE for more details
+
+	Copyright holder(s): cam900
+	Various core utilities for vgsound_emu
+
+	Modified for attach to srz80_plugin by LovelyA72
+*/
+/*
  * Small compatibility layer for the Furnace/vgsound_emu X1-010 core.
  * The card deliberately keeps this dependency private to the plugin.
  */
