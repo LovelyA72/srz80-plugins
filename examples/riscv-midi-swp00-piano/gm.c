@@ -136,6 +136,9 @@ static void meg_word(u16 address, u16 value) {
     gm_global(address, (u8)(value >> 8));
     gm_global((u16)(address + 1u), (u8)value);
 }
+static void meg_offset(u8 index, u16 value) {
+    meg_word((u16)(0x180u + (u16)index * 2u), value);
+}
 static void meg_table(u32 record, u32 registers, u8 constants, u8 delays) {
     u8 i;
     for (i = 0; i < constants; ++i)
@@ -153,22 +156,62 @@ static void effects(void) {
      * It loads Chorus 1 from 0x01fb3a through maps 0x021ad6/0x021af2.
      * The records originate at 0x01f8ae (0x90 bytes each) and 0x01faee
      * (0x4c bytes each); type maps 0x03af04/0x03af11 select record one.
-     * Keep the dry coefficients at 0x202/0x37c untouched.  The remaining
-     * values are the fixed input and return gains used by this receiver;
-     * cross-effect inputs stay zero, so chorus-to-reverb is disabled. */
+     * These records provide preset parameters rather than the complete
+     * runnable coefficient paths, which are supplied below. */
     meg_table(0x1f93eu, 0x21a8eu, 45, 27);
     meg_table(0x1fb3au, 0x21ad6u, 28, 10);
-    meg_word(0x222, 0x0080); /* Reverb input, coefficient 0x11: unity. */
-    meg_word(0x216, 0x0100); /* Reverb return, coefficient 0x0b: 0.5. */
-    meg_word(0x218, 0x0000); /* Reverb return smoothing coefficient. */
+    /* The MU50 preset record contains user parameters, not a complete SWP00
+     * coefficient program. Supply the missing Hall signal path explicitly:
+     * a unity input filter feeds a stereo multi-tap delay, with a damped
+     * 136 ms feedback loop. */
+    meg_word(0x25c, 0x0080); /* Reverb input filter, coefficient 0x2e. */
+    meg_word(0x262, 0x0080); /* Reverb input filter, coefficient 0x31. */
+    meg_offset(17, 0);       /* Input/feedback write head. */
+    meg_offset(9, 11000);    /* Reverb feedback and left chorus tap. */
+    meg_word(0x266, 0x00c0); /* Feedback, coefficient 0x33: 0.375. */
+    /* Keep the other reverb write heads away from the input head. The engine
+     * executes all Hall stages every sample, even when their coefficients are
+     * zero, so aliased heads would erase the input before a delayed tap sees it. */
+    meg_offset(16, 20000); meg_offset(21, 22000);
+    meg_offset(24, 24000); meg_offset(31, 26000);
+    meg_offset(33, 28000); meg_offset(35, 30000); meg_offset(36, 32000);
+    meg_offset(0, 2800); meg_offset(1, 3900);
+    meg_offset(2, 5100); meg_offset(3, 6500);
+    meg_offset(4, 3300); meg_offset(5, 4500);
+    meg_offset(6, 5700); meg_offset(7, 7200);
+    meg_word(0x238, 0x0090); // Left tap sum
+    meg_word(0x242, 0x0090); // Right tap sum 
+    meg_word(0x290, 0x0080); // Left wet output
+    meg_word(0x2a8, 0x0080); // Right wet output
+    meg_word(0x222, 0x0080); // Reverb input
+    meg_word(0x216, 0x0400); // Reverb return 
+    meg_word(0x218, 0x0000); // Reverb return smoothing coefficient
+    /* Complete the Chorus 1 path with unity input filters and two short,
+     * independently modulated delay taps. */
     meg_word(0x204, 0x0080); /* Chorus left input, coefficient 0x02: unity. */
     meg_word(0x20a, 0x0080); /* Chorus right input, coefficient 0x05: unity. */
+    meg_word(0x27a, 0x0080); /* Right input filter, coefficient 0x3d. */
+    meg_word(0x280, 0x0080); /* Right input filter, coefficient 0x40. */
+    meg_word(0x294, 0x0080); /* Left input filter, coefficient 0x4a. */
+    meg_word(0x29a, 0x0080); /* Left input filter, coefficient 0x4d. */
+    meg_offset(22, 0);       /* Right chorus write head. */
+    meg_offset(27, 10000);   /* Left chorus write head. */
+    meg_offset(14, 1200);    /* Right chorus tap: 27 ms. */
+    meg_word(0x212, 0x0002); /* Chorus LFO rate, coefficient 0x09. */
+    meg_word(0x234, 0x0008); /* Left modulation depth, coefficient 0x1a. */
+    meg_word(0x24a, 0x0100); /* Right LFO phase, coefficient 0x25. */
+    meg_word(0x250, 0x0008); /* Right modulation depth, coefficient 0x28. */
+    meg_word(0x2c0, 0x0200); /* Left wet tap, coefficient 0x60. */
+    meg_word(0x2d2, 0x0200); /* Right wet tap, coefficient 0x69. */
+    meg_word(0x22e, 0x0200); /* Left wet mix, coefficient 0x17. */
+    meg_word(0x21c, 0x0200); /* Right wet mix, coefficient 0x0e. */
     meg_word(0x2ae, 0x0100); /* Chorus return, coefficient 0x57: 0.5. */
     meg_word(0x2b0, 0x0000); /* Chorus return smoothing coefficient. */
     meg_word(0x224, 0x0000); /* No chorus-left to reverb routing. */
     meg_word(0x226, 0x0000); /* No chorus-right to reverb routing. */
 }
 __attribute__((weak)) void gm_mode_changed(void) {}
+__attribute__((weak)) void gm_program_changed(u8 channel) { (void)channel; }
 static void reset(Gm *s, u8 xg_mode) {
     u8 i;
     stop(s);
@@ -471,6 +514,10 @@ static void control(Gm *s, u8 channel, u8 cc, u8 value) {
     default: break;
     }
 }
+
+void gm_control(Gm *s, u8 channel, u8 controller, u8 value) {
+    if (channel < 16 && value < 128) control(s, channel, controller, value);
+}
 static void sysex(Gm *s) {
     const u8 *b = s->sysex;
     /* Yamaha XG parameter change: System On, and per-part receive mode. */
@@ -532,6 +579,7 @@ void gm_byte(Gm *s, u8 byte) {
         c->program = byte;
         c->drum = (!s->xg_mode && channel == 9) ||
                   c->bank_msb == 126 || c->bank_msb == 127;
+        gm_program_changed(channel);
         return;
     }
     if (kind == 0xd0) { s->channels[channel].pressure = byte; update(s, channel, 4); return; }

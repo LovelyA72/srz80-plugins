@@ -34,7 +34,9 @@ void gm_poll(Gm *gm);
 void gm_write(u8 voice, u8 reg, u8 value);
 void gm_note_trigger(u8 channel, u8 velocity);
 void gm_mode_changed(void);
+void gm_program_changed(u8 channel);
 void gm_reset(Gm *gm);
 void gm_byte(Gm *gm, u8 byte);
+void gm_control(Gm *gm, u8 channel, u8 controller, u8 value);
 void gm_voice_name(const Gm *gm, u8 channel, char name[9]);
 #endif

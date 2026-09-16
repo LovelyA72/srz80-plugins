@@ -12,7 +12,7 @@
 #define MU50_ROM ((volatile u8 *)0x20000000u)
 #define STATE ((State *)0x4000u)
 
-typedef struct { Gm gm; u16 pending; u8 digits, meter[16]; u32 meter_ticks; } State;
+typedef struct { Gm gm; u16 pending; u8 digits, command, meter[16]; u32 meter_ticks; } State;
 _Static_assert(sizeof(State) < 0x3000, "leave at least 4 KiB for the RV32I stack");
 
 #include "lcd_display.h"
@@ -33,6 +33,9 @@ void gm_note_trigger(u8 channel, u8 velocity) {
     }
 }
 void gm_mode_changed(void) { lcd_refresh(&STATE->gm, STATE->meter); }
+void gm_program_changed(u8 channel) {
+    if (channel == 0) lcd_refresh(&STATE->gm, STATE->meter);
+}
 static void lcd_decay_tick(void) {
     u8 channel, changed = 0;
     if (++STATE->meter_ticks != 16667u) return;
@@ -63,17 +66,31 @@ static void show_program(void) {
     puts_uart(" selected     ");
     lcd_refresh(&STATE->gm, STATE->meter);
 }
+static void show_effect(u8 command) {
+    GmChannel *channel = &STATE->gm.channels[0];
+    puts_uart(command == 'R' ? "\rChannel 1 reverb " : "\rChannel 1 chorus ");
+    number(command == 'R' ? channel->reverb : channel->chorus);
+    puts_uart(" selected     ");
+}
 static void console_byte(u8 byte) {
     GmChannel *channel = &STATE->gm.channels[0];
     if (byte == 'w' || byte == 's') {
         channel->program = (u8)((channel->program + (byte == 'w' ? 1 : 127)) & 127);
-        STATE->pending = 0; STATE->digits = 0; show_program();
+        STATE->pending = 0; STATE->digits = 0; STATE->command = 0; show_program();
+    } else if (byte == 'R' || byte == 'C') {
+        STATE->pending = 0; STATE->digits = 0; STATE->command = byte; UART_DATA = byte;
     } else if (byte >= '0' && byte <= '9' && STATE->digits < 3) {
         STATE->pending = (u16)(STATE->pending * 10 + byte - '0'); ++STATE->digits;
         UART_DATA = byte;
     } else if (byte == '\r' || byte == '\n') {
-        if (STATE->digits && STATE->pending < 128) channel->program = (u8)STATE->pending;
-        show_program(); puts_uart("\r\n> "); STATE->pending = 0; STATE->digits = 0;
+        if (STATE->digits && STATE->pending < 128) {
+            if (STATE->command == 'R') gm_control(&STATE->gm, 0, 91, (u8)STATE->pending);
+            else if (STATE->command == 'C') gm_control(&STATE->gm, 0, 93, (u8)STATE->pending);
+            else channel->program = (u8)STATE->pending;
+        }
+        if (STATE->command == 'R' || STATE->command == 'C') show_effect(STATE->command);
+        else show_program();
+        puts_uart("\r\n> "); STATE->pending = 0; STATE->digits = 0; STATE->command = 0;
     } else if ((byte == 8 || byte == 127) && STATE->digits) {
         u16 reduced = STATE->pending, tens = 0;
         while (reduced >= 10) { reduced -= 10; ++tens; }
@@ -85,7 +102,7 @@ __attribute__((noreturn, noinline, used)) void firmware_main(void) {
     /* Make the splash an explicit input boundary even if the project restores
        the MIDI card with receive already enabled. */
     MIDI_CONTROL = 0;
-    gm_reset(&STATE->gm); STATE->pending = 0; STATE->digits = 0; STATE->meter_ticks = 0;
+    gm_reset(&STATE->gm); STATE->pending = 0; STATE->digits = 0; STATE->command = 0; STATE->meter_ticks = 0;
     for (channel = 0; channel != 16; ++channel) STATE->meter[channel] = 0;
     /* Drop everything received before or during the splash. Resetting the GM
        state also rejects a channel message split across the boundary. */
@@ -94,7 +111,7 @@ __attribute__((noreturn, noinline, used)) void firmware_main(void) {
     gm_reset(&STATE->gm);
     lcd_define_bars();
     lcd_refresh(&STATE->gm, STATE->meter);
-    puts_uart("SRZ80 GM1 receiver; drums on channel 10\r\nChannel 1 program 0-127 + Return; w next, s previous\r\n> ");
+    puts_uart("SRZ80 GM1 receiver; drums on channel 10\r\nChannel 1: program 0-127; R0-R127 reverb; C0-C127 chorus; w/s program\r\n> ");
     MIDI_CONTROL = 2;
     for (;;) {
         if (MIDI_STATUS & 1u) gm_byte(&STATE->gm, MIDI_DATA);

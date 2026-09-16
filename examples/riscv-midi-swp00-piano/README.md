@@ -45,8 +45,10 @@ After the two-second LCD intro:
 - Send MIDI to `swp00-piano.midi` using the MIDI tool's keyboard, MIDI-file
   player, or connected input. The project opens Yamaha's original MU50 demo,
   `Demo MIDI_Yamaha MU Series_MU50_TheMusithm.mid`, by default.
-- Use the UART console endpoint `swp00-piano.uart` to select channel 1's
-  program: enter **0–127** and Return, or use `w` / `s` for next / previous.
+- Use the UART console endpoint `swp00-piano.uart` to control channel 1. Enter
+  **0–127** and Return to select its program, `R0`–`R127` and Return to set its
+  reverb send, or `C0`–`C127` and Return to set its chorus send. Use `w` / `s`
+  for the next / previous program.
 - The LCD shows channel 1's eight-character MU50 ROM voice name (for example,
   `GrandPno`), the current `GM`/`XG` operating mode in the last two cells of
   the first line, and activity for all 16 channels.
