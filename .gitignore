@@ -20,6 +20,11 @@ AGENTS.md
 *.pdb
 *.ilk
 
+# --- ROM ---
+*.rom
+*.bin
+*.ic*
+
 # --- Rust ---
 target/
 **/*.rs.bk

@@ -140,7 +140,7 @@ SrhStatus SRH_CALL load(void *c, const uint8_t *buffer, uint64_t size) {
 const SrhImageSlotDescriptor slots[]{{SRH_INIT(SrhImageSlotDescriptor), "Sample RAM bank (raw, optional, up to 2 MiB)"}};
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "ADPCM",
     "Single mono voice: DPCM, PCM4/8, IMA and G.711 mu-law; private 2 MiB RAM",
-    0x10000000, Device::register_count, 0, 0, 0, 0,
+    0x1000, Device::register_count, 0, 0, 0, 0,
     R"({"sample_rate":44100,"stream_name":"ADPCM"})", nullptr, nullptr, slots, 1};
 const SrhPlugin api{SRH_INIT(SrhPlugin), "adpcm", create, destroy, reset, count, info, get, set,
                     save, load, &descriptor, nullptr, nullptr};
