@@ -254,6 +254,20 @@ typedef struct SrhHostAudioV1 {
     SrhAudioRegister register_source;
 } SrhHostAudioV1;
 
+/* Optional query: "host.audio_input.v1". Existing ABI tables are unchanged.
+   Simulation-thread only. request(owner, rate) starts a subscription at
+   8000..384000 Hz; request(owner, 0) stops it. read() is nonblocking, returns
+   frames of interleaved float PCM, and takes capacity in float sample slots.
+   The host performs nearest-exact rate conversion; clients must use the
+   returned rate and channel count on every call. */
+typedef struct SrhHostAudioInputV1 {
+    SRH_HEADER;
+    void *context;
+    SrhStatus (SRH_CALL *request)(void *, SrhHandle owner, uint32_t sample_rate);
+    uint32_t (SRH_CALL *read)(void *, SrhHandle owner, float *samples,
+                            uint32_t capacity, uint32_t *rate, uint32_t *channels);
+} SrhHostAudioInputV1;
+
 /* Configuration entries exposed by trusted native plugins/tools in the host
    Settings window.  The host copies metadata at registration time and owns the
    canonical key=value store.  get/set use UTF-8 text values; the UI interprets

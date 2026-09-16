@@ -38,7 +38,9 @@
       },
       "images": [
         "xq057c0.ic18",
-        "xq058c0.ic19"
+        "xq058c0.ic19",
+        "",
+        ""
       ],
       "name": "Yamaha SWP00",
       "plugin": "swp00",

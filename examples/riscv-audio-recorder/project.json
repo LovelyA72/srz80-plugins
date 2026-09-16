@@ -1,0 +1,19 @@
+{
+  "cards": [
+    {"plugin":"ram","name":"128 KiB recording RAM","space":"rv.memory","base":"0x00010000","size":"0x00020000"},
+    {"plugin":"rom","name":"Recorder firmware ROM","space":"rv.memory","base":0,"size":0,"image":"recorder.rom","priority":10},
+    {"plugin":"riscv","name":"RV32I recorder CPU","space":"rv.memory","clock":0,"reset_vector":0},
+    {"plugin":"audio_input","name":"Live audio input","space":"rv.memory","base":"0x10000000","size":16,"config":{"sample_rate":16000,"channel":0}},
+    {"plugin":"dac","name":"Recorded audio output","space":"rv.memory","base":"0x10000100","size":5,"config":{"sample_rate":44100,"stream_name":"RISC-V five-second recorder"}}
+  ],
+  "clocks": [4000000, 0, 0],
+  "epoch_ns": 0,
+  "metadata": {
+    "title": "RISC-V five-second audio recorder",
+    "description": "Records host input into guest RAM for five seconds, plays it through the PCM DAC for five seconds, and repeats."
+  },
+  "seed": 1,
+  "spaces": [{"maximum":"0xFFFFFFFF","name":"rv.memory","resolver":"priority","unclaimed":0}],
+  "time_mode": "project",
+  "version": 2
+}

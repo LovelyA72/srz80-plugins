@@ -220,6 +220,8 @@ typedef struct SrzAudioSource {
     uint32_t volume_percent;
     uint32_t muted;
     uint32_t active;
+    /* Peak after source gain and mute, before summing; S16 full scale is 32768. */
+    uint32_t level_peak;
 } SrzAudioSource;
 
 typedef struct SrzAudioDiagnostics {
@@ -458,6 +460,10 @@ SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_reorder_cards(SrzEngine *engine, cons
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_card_alive(const SrzEngine *engine, SrhHandle card);
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_set_card_name(SrzEngine *engine, SrhHandle card,
                                                          SrzSlice name);
+/* Moves a card's clock subscriptions to another master clock without
+   recreating the card or resetting the rack. */
+SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_set_card_clock(SrzEngine *engine, SrhHandle card,
+                                                          uint32_t clock);
 
 /* Card enumerations write their own slots in `result`. */
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_cards(const SrzEngine *engine, SrzResult *result);
@@ -700,6 +706,11 @@ SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_register_source(SrzEngine *engi
                                                                  void *render_context,
                                                                  SrhHandle *source);
 /* Drains up to `frames` interleaved S16 stereo frames from the bounded queue. */
+/* Capture frontend bridge; engine-thread only. A zero format clears capture.
+   push copies at most 8192 frames; samples must contain frames * channels floats. */
+SRZ_EXPORT uint32_t SRZ_CALL srz80_engine_audio_input_requested(SrzEngine *engine);
+SRZ_EXPORT void SRZ_CALL srz80_engine_audio_input_push(SrzEngine *engine,
+    const float *samples, uint32_t frames, uint32_t rate, uint32_t channels);
 SRZ_EXPORT uint32_t SRZ_CALL srz80_engine_audio_read(SrzEngine *engine, int16_t *interleaved,
                                                      uint32_t frames);
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_diagnostics(const SrzEngine *engine,
@@ -707,6 +718,7 @@ SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_diagnostics(const SrzEngine *en
 SRZ_EXPORT void SRZ_CALL srz80_engine_audio_set_queue_capacity(SrzEngine *engine, uint64_t frames);
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_sources(const SrzEngine *engine,
                                                          SrzResult *result);
+/* Source volume is limited to 0..150 percent. */
 SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_set_source_volume(SrzEngine *engine,
                                                                    SrhHandle source,
                                                                    uint32_t percent);
@@ -714,6 +726,9 @@ SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_set_source_muted(SrzEngine *eng
                                                                   SrhHandle source,
                                                                   uint32_t muted);
 SRZ_EXPORT uint32_t SRZ_CALL srz80_engine_audio_master_volume(const SrzEngine *engine);
+/* Peaks in the final stereo PCM since the previous query; querying clears them. */
+SRZ_EXPORT SrhStatus SRZ_CALL srz80_engine_audio_master_levels(const SrzEngine *engine,
+                                                               uint32_t *left, uint32_t *right);
 SRZ_EXPORT void SRZ_CALL srz80_engine_audio_set_master_volume(SrzEngine *engine, uint32_t percent);
 SRZ_EXPORT uint32_t SRZ_CALL srz80_engine_audio_dc_offset_correction(const SrzEngine *engine);
 SRZ_EXPORT void SRZ_CALL srz80_engine_audio_set_dc_offset_correction(SrzEngine *engine,
