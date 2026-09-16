@@ -23,16 +23,18 @@
       "space": "cpu0.memory"
     },
     {
-      "base": "0xD400",
+      "base": 54272,
+      "clock": 0,
       "config": {
         "chip_clock_hz": 985248,
         "model": "8580",
         "sample_rate": 44100,
-        "stream_name": "Empty SID"
+        "stream_name": "SID"
       },
       "plugin": "sid",
       "priority": 10,
-      "size": "0x20",
+      "reset_vector": 0,
+      "size": 32,
       "space": "cpu0.memory"
     }
   ],
@@ -46,7 +48,24 @@
     "description": "4mat's Empty SID tune running in the W65C816's 6502 emulation mode with a memory-mapped MOS 8580 SID.",
     "title": "Empty: W65C816 + RAM + SID"
   },
+  "mixer": {
+    "sources": [
+      {
+        "card": 3,
+        "muted": false,
+        "name": "Empty SID",
+        "ordinal": 0,
+        "volume": 150
+      }
+    ]
+  },
   "name": "w65c816-sid",
+  "rack_info": {
+    "author": "4mat, LovelyA72",
+    "notes": "Music and code by 4mat\n\nPort by LovelyA72\n\nA very minimal port to the SRZ80\nusing the w65c816 card.\n",
+    "thumbnail": "",
+    "version": ""
+  },
   "seed": 1,
   "spaces": [
     {
