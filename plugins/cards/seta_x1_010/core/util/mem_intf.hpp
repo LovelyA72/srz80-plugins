@@ -1,3 +1,12 @@
+/*
+	License: Zlib
+	see https://gitlab.com/cam900/vgsound_emu/-/blob/main/LICENSE for more details
+
+	Copyright holder(s): cam900
+	Common memory interface for vgsound_emu
+
+	Modified for attach to srz80_plugin by LovelyA72
+*/
 #ifndef SRZ80_X1_010_MEM_INTF_HPP
 #define SRZ80_X1_010_MEM_INTF_HPP
 
