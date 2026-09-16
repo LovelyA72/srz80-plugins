@@ -1,3 +1,6 @@
+# Source code of this demo
+# you have to use my sol compiler (https://github.com/src3453/src32) to compile this
+
 !const SGU_BASE 0x1000
 
 fn regw (v a) :
