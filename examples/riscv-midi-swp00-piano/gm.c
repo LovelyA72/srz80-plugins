@@ -369,9 +369,10 @@ static void start(Gm *s, u8 channel, u8 note, u8 velocity, u8 secondary,
     gm_write(i, 0x31, (u8)(address >> 16));
     word(i, 0x32, (u16)address);
     word(i, 0x36, loop);
-    /* Open, non-resonant low-pass. Full MU50 filter/PEG modulation is outside
-     * this receiver; the original wave samples and sample formats are intact. */
-    word(i, 0x20, 0x7ff);
+    /* Full MU50 filter/PEG modulation is outside this receiver. 0x6ff leaves
+     * the low-pass effectively open without the alternating-sample mode that
+     * the maximum 0x7ff coefficient excites. */
+    word(i, 0x20, 0x6ff);
     gm_write(i, 0x24, element ? (u8)(gm_rom(element+9) << 1) : 0);
     gm_write(i, 0x23, element ? gm_rom(element+14) : 0);
     gm_write(i, 0x26, (u8)(0x80u | (element ? rate(gm_rom(element+71) + scaling) : 127)));
