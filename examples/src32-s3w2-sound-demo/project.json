@@ -31,7 +31,7 @@
     {
       "base": 0,
       "clock": 0,
-      "image": "rom.bin",
+      "image": "rom.rom",
       "name": "PROM",
       "plugin": "rom",
       "priority": 0,
