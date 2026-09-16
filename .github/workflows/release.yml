@@ -1,0 +1,99 @@
+name: Build release archives
+
+on:
+  push:
+    tags:
+      - "[0-9]*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: release number
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} on Linux
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            preset: gcc-release
+            extension: so
+          - platform: win-x64
+            preset: mingwcross-release
+            extension: dll
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Install Linux and MinGW-w64 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            build-essential cmake libasound2-dev mingw-w64
+
+      - name: Configure
+        run: cmake --preset "${{ matrix.preset }}"
+
+      - name: Build
+        run: cmake --build --preset "${{ matrix.preset }}" --parallel
+
+      - name: Stage plugins and tools
+        env:
+          PRESET: ${{ matrix.preset }}
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          mkdir -p package/plugins package/tools
+          cp build/"$PRESET"/plugins/*."$EXTENSION" package/plugins/
+          cp build/"$PRESET"/tools/*."$EXTENSION" package/tools/
+
+      - name: Create release archive
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        working-directory: package
+        run: cmake -E tar cf ../srz80-plugins-"$PLATFORM"-"$RELEASE_TAG".zip --format=zip plugins tools
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: srz80-plugins-${{ matrix.platform }}
+          path: srz80-plugins-${{ matrix.platform }}-${{ github.event.inputs.release_tag || github.ref_name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release assets
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: srz80-plugins-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create release if needed and upload archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" dist/*.zip --clobber
