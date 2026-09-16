@@ -416,7 +416,13 @@ static void start(Gm *s, u8 channel, u8 note, u8 velocity, u8 secondary,
      * the low-pass effectively open without the alternating-sample mode that
      * the maximum 0x7ff coefficient excites. */
     word(i, 0x20, 0x6ff);
-    gm_write(i, 0x24, element ? (u8)(gm_rom(element+9) << 1) : 0);
+    /* MU50 v1.05 0x04a0fe / 0x04c4f2: waveform bits and the nonlinear
+     * speed encoding come from separate ROM tables. Doubling the preset
+     * speed corrupts both: TenorSax becomes a 16 Hz saw instead of a
+     * 4.7 Hz triangle, with an audible reset on every modulation cycle. */
+    gm_write(i, 0x24, element ?
+             (u8)(gm_rom(0x2244eu + gm_rom(element+7)) |
+                  gm_rom(0x2289au + (gm_rom(element+9) & 63u))) : 0);
     gm_write(i, 0x23, element ? gm_rom(element+14) : 0);
     gm_write(i, 0x26, (u8)(0x80u | (element ? rate(gm_rom(element+71) + scaling) : 127)));
     gm_write(i, 0x27, element && gm_rom(element+71) < 63 ? 0xff : 0);
