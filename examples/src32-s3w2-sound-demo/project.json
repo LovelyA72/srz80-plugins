@@ -1,0 +1,72 @@
+{
+  "cards": [
+    {
+      "base": 4096,
+      "clock": 0,
+      "plugin": "3ws8pn",
+      "priority": 0,
+      "reset_vector": 4096,
+      "size": 4096,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 0,
+      "clock": 0,
+      "plugin": "src32",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 0,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 12288,
+      "clock": 0,
+      "name": "WRAM",
+      "plugin": "ram",
+      "priority": 0,
+      "reset_vector": 12288,
+      "size": 4096,
+      "space": "cpu0.memory"
+    },
+    {
+      "base": 0,
+      "clock": 0,
+      "image": "rom.rom",
+      "name": "PROM",
+      "plugin": "rom",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 4096,
+      "space": "cpu0.memory"
+    }
+  ],
+  "clocks": [
+    4000000,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "name": "sound-demo.json",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    },
+    {
+      "maximum": "0xFF",
+      "name": "cpu0.io",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
