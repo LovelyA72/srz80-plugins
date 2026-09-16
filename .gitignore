@@ -21,7 +21,8 @@ AGENTS.md
 *.ilk
 
 # --- ROM ---
-*.rom
+# use .rom for your compiled executable
+# inclusion of copyrighted ROM dumps are prohibited
 *.bin
 *.ic*
 
