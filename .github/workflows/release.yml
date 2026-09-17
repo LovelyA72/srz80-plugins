@@ -34,6 +34,8 @@ jobs:
       - name: Create and push release tag
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          TAGGER_NAME: ${{ github.actor }}
+          TAGGER_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
         run: |
           if ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
             echo "Invalid tag name: $RELEASE_TAG" >&2
@@ -46,6 +48,8 @@ jobs:
           fi
 
           master_sha="$(git rev-parse HEAD)"
+          git config user.name "$TAGGER_NAME"
+          git config user.email "$TAGGER_EMAIL"
           git tag --annotate --message "Release $RELEASE_TAG" "$RELEASE_TAG" "$master_sha"
           git push origin "refs/tags/$RELEASE_TAG"
 
