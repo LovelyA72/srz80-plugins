@@ -6,6 +6,8 @@ scratch/
 
 # Agents are allowed but keep them to contributors themselves
 AGENTS.md
+.agents
+.codex
 
 # --- C/C++ ---
 *.o

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: release number
+        description: tag name to create from the current master branch
         required: true
         type: string
 
@@ -19,7 +19,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tag_master:
+    name: Tag current master
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Create and push release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! git check-ref-format "refs/tags/$RELEASE_TAG"; then
+            echo "Invalid tag name: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          if git show-ref --tags --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "Tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          master_sha="$(git rev-parse HEAD)"
+          git tag --annotate --message "Release $RELEASE_TAG" "$RELEASE_TAG" "$master_sha"
+          git push origin "refs/tags/$RELEASE_TAG"
+
   build:
+    needs: tag_master
+    if: ${{ always() && (needs.tag_master.result == 'success' || needs.tag_master.result == 'skipped') }}
     name: Build ${{ matrix.platform }} on Linux
     runs-on: ubuntu-24.04
     strategy:
