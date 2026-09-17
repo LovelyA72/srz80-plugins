@@ -1,0 +1,87 @@
+{
+  "cards": [
+    {
+      "base": 0,
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x8000",
+      "space": "cpu0.memory"
+    },
+    {
+      "base": "0x8000",
+      "image": "nesapu.rom",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "cpu0.memory"
+    },
+    {
+      "clock": 0,
+      "config": {
+        "clock_hz_hint": 1789773
+      },
+      "plugin": "w65c816",
+      "space": "cpu0.memory"
+    },
+    {
+      "base": "0x4000",
+      "clock": 0,
+      "config": {
+        "clock_hz": 1789773,
+        "region": "ntsc",
+        "sample_rate": 44100,
+        "gain_milli": 400,
+        "stream_name": "NES APU"
+      },
+      "plugin": "nesapu",
+      "priority": 10,
+      "size": 24,
+      "space": "cpu0.memory",
+      "name": "apu0"
+    }
+  ],
+  "clocks": [
+    1789773,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A four-bar C major phrase played channel by channel at 240 bpm by a native-mode W65C816: pulse 1, pulse 2, triangle, then noise.",
+    "title": "Middle C: W65C816 + NES APU"
+  },
+  "mixer": {
+    "sources": [
+      {
+        "card": 3,
+        "muted": false,
+        "name": "NES APU",
+        "ordinal": 0,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "w65c816-nesapu",
+  "rack_info": {
+    "author": "",
+    "notes": "Each channel plays the sixteen-slot phrase in turn at 240 bpm.\n",
+    "thumbnail": "",
+    "version": ""
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFF",
+      "name": "cpu0.memory",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "nesapu.asm"
+  },
+  "version": 2
+}
