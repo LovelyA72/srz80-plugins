@@ -70,6 +70,10 @@ public:
     // Shared checked memory gateway, including DMA writes. Rendering
     // calls only fetch; no storage organization is embedded in the adapter.
     uint8_t fetch(uint64_t address);
+    // Reads four contiguous little-endian bytes, preferring the memory's word
+    // transport and falling back to per-byte fetch() so fault accounting (and
+    // the strict AbortLine path) stays identical to the byte path.
+    bool fetch_word(uint64_t address, uint32_t &value);
     bool store(uint64_t address, uint8_t value);
     std::vector<uint8_t> save() const;
     bool load(std::span<const uint8_t> state);

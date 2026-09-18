@@ -67,11 +67,21 @@ public:
     HostMemory(const ShouryoHost &host, SrhHandle owner, SrhHandle space,
                SrhHandle io, uint64_t base)
         : host_(host),owner_(owner),space_(space),io_(io),base_(base) {}
+    void set_read_word(SrhHostReadWord callback) { read_word_=callback; }
     bool active() const { return active_; }
     bool read(uint64_t address, uint8_t &value) override {
         if (!allowed(address)) return false;
         Busy busy(active_);
         return host_.read(host_.context,owner_,space_,address,&value)==SRH_OK;
+    }
+    bool read_word(uint64_t address, uint32_t &value) override {
+        // The host word read needs all four bytes in one allowed mapping; on
+        // any refusal the caller falls back to per-byte reads.
+        if (!read_word_) return false;
+        for (unsigned i=0; i<4; ++i)
+            if (!allowed(address+i)) return false;
+        Busy busy(active_);
+        return read_word_(host_.context,owner_,space_,address,&value)==SRH_OK;
     }
     bool write(uint64_t address, uint8_t value) override {
         if (!allowed(address)) return false;
@@ -91,6 +101,7 @@ private:
     const ShouryoHost &host_;
     SrhHandle owner_,space_,io_;
     uint64_t base_;
+    SrhHostReadWord read_word_=nullptr;
     bool active_=false;
 };
 class Card {
@@ -114,6 +125,7 @@ public:
     void connect_signals(const SrhHostSignalsV1 *signals, SrhHandle nmi, SrhHandle irq) {
         signals_=signals; nmi_signal_=nmi; irq_signal_=irq;
     }
+    void set_read_word(SrhHostReadWord callback) { memory_.set_read_word(callback); }
     SrhStatus start(const SrhConfig &config, const SrhHostVideoV1 &video) {
         SrhMapping mapping{SRH_INIT(SrhMapping),config.space,base_,base_+127,config.priority,
                            this,read,write,read,nullptr};
@@ -266,6 +278,19 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             !video->register_video_ex || !video->set_video_timing) {
             diagnostic(config,"VSN requires extended video registration and timing callbacks"); return SRH_UNAVAILABLE;
         }
+        // Optional bulk memory read. A missing host.memory.v1 is not an error:
+        // rendering falls back to byte reads. The word read may still refuse
+        // per access (tracing, breakpoints, mapping boundaries), so the core
+        // always retains the byte fallback.
+        SrhHostReadWord read_word=nullptr;
+        extension=nullptr;
+        if (host->query(host->context,"host.memory.v1",&extension)==SRH_OK && extension) {
+            const auto *memory_ext=static_cast<const SrhHostMemoryV1*>(extension);
+            if (srz80::sdk::valid(memory_ext) &&
+                srz80::sdk::has_field(memory_ext,&SrhHostMemoryV1::read_word) &&
+                memory_ext->read_word)
+                read_word=memory_ext->read_word;
+        }
         // Interrupt signals are optional: an empty nmi_signal/irq_signal config
         // disables the corresponding line and skips the signals requirement.
         const SrhHostSignalsV1 *signals=nullptr;
@@ -289,6 +314,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         }
         auto card=std::make_unique<Card>(*host,owner,*config,parsed,memory);
         card->connect_signals(signals,nmi,irq);
+        card->set_read_word(read_word);
         const auto status=card->start(*config,*video);
         if (status!=SRH_OK) { diagnostic(config,"VSN could not map MMIO, register video or schedule raster"); return status; }
         *out=card.release(); return SRH_OK;

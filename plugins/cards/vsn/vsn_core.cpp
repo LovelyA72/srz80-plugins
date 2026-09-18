@@ -77,6 +77,25 @@ uint8_t Core::fetch(uint64_t address) {
     }
     return value;
 }
+bool Core::fetch_word(uint64_t address, uint32_t &value) {
+    if (address<=UINT32_MAX && memory_.read_word(address,value)) return true;
+    // Word transport unavailable or refused (no host primitive, tracing,
+    // breakpoints, or a mapping boundary): replay as four byte reads so the
+    // per-byte fault accounting and the strict AbortLine path stay identical
+    // to the byte path.
+    value=0;
+    bool ok=true;
+    for (unsigned i=0; i<4; ++i) {
+        const uint64_t byte=address+i;
+        uint8_t v=0xff;
+        if (byte>UINT32_MAX || !memory_.read(byte,v)) {
+            fault(byte,false);
+            ok=false;
+        }
+        value|=uint32_t(v)<<(8*i);
+    }
+    return ok;
+}
 bool Core::store(uint64_t address, uint8_t value) {
     if (address>UINT32_MAX || !memory_.write(address,value)) { fault(address,true); return false; }
     return true;
@@ -162,6 +181,7 @@ void Core::render_line() {
         explicit Gateway(Core &core) : core_(core) {}
         bool read(uint64_t address, uint8_t &value) override { value=core_.fetch(address); return true; }
         bool write(uint64_t address, uint8_t value) override { return core_.store(address,value); }
+        bool read_word(uint64_t address, uint32_t &value) override { return core_.fetch_word(address,value); }
     private:
         Core &core_;
     } gateway(*this);

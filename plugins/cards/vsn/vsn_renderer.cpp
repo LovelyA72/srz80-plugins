@@ -16,7 +16,7 @@ using Color=std::array<uint8_t,4>;
 // return a wrong value.
 class ByteCache {
 public:
-    explicit ByteCache(Memory &memory) : memory_(memory) { tags_.fill(~0ull); }
+    explicit ByteCache(Memory &memory) : memory_(memory) { tags_.fill(~0ull); word_tags_.fill(~0ull); }
     uint8_t fetch(uint64_t address) {
         const uint32_t slot = uint32_t((address * 0x9e3779b97f4a7c15ull) >> (64 - kBits));
         if (tags_[slot] == address) return values_[slot];
@@ -26,11 +26,26 @@ public:
         values_[slot] = value;
         return value;
     }
+    // Word-granular fetch for a four-byte chunk the caller guarantees is fully
+    // needed (the packed tile rows: 4, 8, or 16 contiguous bytes). The chunk
+    // address is 4-aligned and stays inside the tile row, so a word read never
+    // over-reads past the data the renderer intends to touch.
+    uint8_t fetch_word(uint64_t address, unsigned byte) {
+        const uint32_t slot = uint32_t((address * 0x9e3779b97f4a7c15ull) >> (64 - kBits));
+        if (word_tags_[slot] == address) return uint8_t(word_values_[slot] >> (byte * 8));
+        uint32_t word = 0xffffffff;
+        memory_.read_word(address, word);
+        word_tags_[slot] = address;
+        word_values_[slot] = word;
+        return uint8_t(word >> (byte * 8));
+    }
 private:
     static constexpr unsigned kBits = 10;
     Memory &memory_;
     std::array<uint64_t, 1u << kBits> tags_;
     std::array<uint8_t, 1u << kBits> values_;
+    std::array<uint64_t, 1u << kBits> word_tags_;
+    std::array<uint32_t, 1u << kBits> word_values_;
 };
 
 // Palette and sprite-table latch shared across a frame. These are stable inputs
@@ -57,12 +72,13 @@ public:
         : line_(line), memory_(memory), output_(output), latch_(latch), cache_(memory) {}
     VideoEffects render() {
         latch_palette();
+        prepare_row();
         const auto control=r(4);
         const auto backdrop=latch_.palette[r(5) == 0 ? 0 : r(0x45)];
         std::array<uint8_t,512> background{};
         for (unsigned x=0; x<line_.width; ++x) {
             if ((control & 2) && (r(5) != 0 || x>=8 || (control & 8)))
-                background[x]=background_pixel(x, line_.y);
+                background[x]=background_pixel(x);
             put(x, background[x] ? latch_.palette[background[x]] : backdrop);
         }
         if (control & 4) {
@@ -142,62 +158,91 @@ private:
         const auto high=cache_.fetch(address+8);
         return layout::planar2(low,high,x);
     }
-    uint8_t background_pixel(unsigned x, unsigned y) {
-        x+=v(0x14,2); y+=v(0x16,2);
+    // Compute the row-invariant terms once per scanline. Everything that depends
+    // only on y (scroll, map wrap, descriptor row, in-tile row) is hoisted here
+    // so background_pixel() only adds the per-pixel x terms.
+    void prepare_row() {
+        const uint8_t mode=r(5);
+        scroll_x_=uint16_t(v(0x14,2));
+        map_base_=v(0x20,4);
+        tile_base_=v(0x24,4);
+        const uint32_t scrolled_y=uint32_t(line_.y)+v(0x16,2);
+        const unsigned map_w=r(0x2a) ? r(0x2a) : 256;
+        const unsigned map_h=r(0x2b) ? r(0x2b) : 256;
+        if (mode==4 || mode==5) {
+            stride_=uint16_t(v(0x28,2));
+            wrap_x_=map_w*16;
+            y_wrapped_=scrolled_y%(map_h*16);
+            desc_row_=uint64_t(y_wrapped_/16)*stride_;
+            tile_row_=y_wrapped_&15;
+        } else if (mode>=1 && mode<=3) {
+            stride_=uint16_t(v(0x28,2));
+            wrap_x_=map_w*8;
+            y_wrapped_=scrolled_y%(map_h*8);
+            desc_row_=uint64_t(y_wrapped_/8)*stride_;
+            tile_row_=y_wrapped_&7;
+        } else { // mode 0 (NES)
+            stride_x_=uint16_t(v(0x2c,2));
+            stride_y_=uint16_t(v(0x2e,2));
+            nes_page_y_=uint64_t((scrolled_y%480)/240)*stride_y_;
+            nes_row_y_=scrolled_y%240;
+            tile_row_=nes_row_y_&7;
+        }
+    }
+    uint8_t background_pixel(unsigned x) {
+        x+=scroll_x_;
         if (r(5)==1) {
-            x %= unsigned(r(0x2a) ? r(0x2a) : 256)*8;
-            y %= unsigned(r(0x2b) ? r(0x2b) : 256)*8;
-            const auto address=layout::packed_map(v(0x20,4),v(0x28,2),x,y);
-            const uint16_t descriptor=descriptor_at(address);
-            const auto pixel=layout::nibble(cache_.fetch(layout::packed4(v(0x24,4),descriptor&4095,x&7,y&7)),x);
+            x %= wrap_x_;
+            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
+            const unsigned lx=x&7;
+            const auto row=cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*32+uint64_t(tile_row_)*4,lx/2);
+            const auto pixel=layout::nibble(row,lx);
             return pixel ? uint8_t((descriptor>>12)*16+pixel) : 0;
         }
         if (r(5)==2) {
             // VT planar: same 16-bit descriptor map as packed4, tiles decoded as
             // 2bpp or 4bpp bitplanes over a linear base. Pixel zero is the
             // backdrop; otherwise palette index is bank*stride+pixel.
-            x %= unsigned(r(0x2a) ? r(0x2a) : 256)*8;
-            y %= unsigned(r(0x2b) ? r(0x2b) : 256)*8;
-            const auto address=layout::packed_map(v(0x20,4),v(0x28,2),x,y);
-            const uint16_t descriptor=descriptor_at(address);
-            const unsigned tile=descriptor&4095, bank=descriptor>>12, lx=x&7, ly=y&7;
+            x %= wrap_x_;
+            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
+            const unsigned tile=descriptor&4095, bank=descriptor>>12, lx=x&7;
             if (r(0x39)&1) {
-                const auto p0=cache_.fetch(layout::planar_tile(v(0x24,4),tile,0,ly,4));
-                const auto p1=cache_.fetch(layout::planar_tile(v(0x24,4),tile,1,ly,4));
-                const auto p2=cache_.fetch(layout::planar_tile(v(0x24,4),tile,2,ly,4));
-                const auto p3=cache_.fetch(layout::planar_tile(v(0x24,4),tile,3,ly,4));
+                const auto p0=cache_.fetch(layout::planar_tile(tile_base_,tile,0,tile_row_,4));
+                const auto p1=cache_.fetch(layout::planar_tile(tile_base_,tile,1,tile_row_,4));
+                const auto p2=cache_.fetch(layout::planar_tile(tile_base_,tile,2,tile_row_,4));
+                const auto p3=cache_.fetch(layout::planar_tile(tile_base_,tile,3,tile_row_,4));
                 const auto pixel=layout::planar4(p0,p1,p2,p3,lx);
                 return pixel ? uint8_t(bank*16+pixel) : 0;
             }
-            const auto p0=cache_.fetch(layout::planar_tile(v(0x24,4),tile,0,ly,2));
-            const auto p1=cache_.fetch(layout::planar_tile(v(0x24,4),tile,1,ly,2));
+            const auto p0=cache_.fetch(layout::planar_tile(tile_base_,tile,0,tile_row_,2));
+            const auto p1=cache_.fetch(layout::planar_tile(tile_base_,tile,1,tile_row_,2));
             const auto pixel=layout::planar2(p0,p1,lx);
             return pixel ? uint8_t(bank*4+pixel) : 0;
         }
         if (r(5)==3) {
             // Packed 8bpp: one byte per pixel. The palette index is the pixel
             // value, so descriptor bank bits are ignored.
-            x %= unsigned(r(0x2a) ? r(0x2a) : 256)*8;
-            y %= unsigned(r(0x2b) ? r(0x2b) : 256)*8;
-            const uint16_t descriptor=descriptor_at(layout::packed_map(v(0x20,4),v(0x28,2),x,y));
-            return cache_.fetch(layout::packed8(v(0x24,4),descriptor&4095,x&7,y&7));
+            x %= wrap_x_;
+            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
+            const unsigned lx=x&7;
+            return cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*64+uint64_t(tile_row_)*8+(lx&~3u),lx&3);
         }
         if (r(5)==4 || r(5)==5) {
             // Packed 16x16 8bpp: tile rows span 16 map columns and 16 pixel rows.
             // Mode 5 (high resolution) uses the same 16x16x8 packed tile format
             // as mode 4, rendered natively at 512x480 instead of 256x240.
-            x %= unsigned(r(0x2a) ? r(0x2a) : 256)*16;
-            y %= unsigned(r(0x2b) ? r(0x2b) : 256)*16;
-            const uint16_t descriptor=descriptor_at(layout::packed_map16(v(0x20,4),v(0x28,2),x,y));
-            return cache_.fetch(layout::packed8_16x16(v(0x24,4),descriptor&4095,x&15,y&15));
+            x %= wrap_x_;
+            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/16)*2);
+            const unsigned lx=x&15;
+            return cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*256+uint64_t(tile_row_)*16+(lx&~3u),lx&3);
         }
-        x%=512; y%=480;
-        const auto page=layout::nes_page(v(0x20,4),v(0x2c,2),v(0x2e,2),x,y);
-        x%=256; y%=240;
-        const auto tile=cache_.fetch(page+(y/8)*32+x/8);
-        const auto attribute=cache_.fetch(layout::nes_attribute(page,x/8,y/8));
-        const auto bank=(attribute>>layout::attribute_shift(x/8,y/8))&3;
-        const auto pixel=pattern(layout::nes_pattern(v(0x24,4),r(0x38)&1,tile,y&7),x&7);
+        x%=512;
+        const auto page=map_base_+uint64_t(x/256)*stride_x_+nes_page_y_;
+        x%=256;
+        const auto tile=cache_.fetch(page+(nes_row_y_/8)*32+x/8);
+        const auto attribute=cache_.fetch(layout::nes_attribute(page,x/8,nes_row_y_/8));
+        const auto bank=(attribute>>layout::attribute_shift(x/8,nes_row_y_/8))&3;
+        const auto pixel=pattern(layout::nes_pattern(tile_base_,r(0x38)&1,tile,tile_row_),x&7);
         return pixel ? uint8_t(bank*4+pixel) : 0;
     }
     void sprites(const std::array<uint8_t,512> &background) {
@@ -297,6 +342,13 @@ private:
     std::span<uint8_t> output_;
     FrameLatch &latch_;
     ByteCache cache_;
+    // Per-scanline row invariants, filled once by prepare_row().
+    uint16_t scroll_x_=0;
+    uint64_t map_base_=0;
+    uint32_t tile_base_=0;
+    uint16_t stride_=0, stride_x_=0, stride_y_=0;
+    uint32_t wrap_x_=0, y_wrapped_=0, tile_row_=0, nes_row_y_=0;
+    uint64_t desc_row_=0, nes_page_y_=0;
     VideoEffects effects_{};
 };
 class TileRenderer final : public Renderer {
