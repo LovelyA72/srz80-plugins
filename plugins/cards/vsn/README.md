@@ -1,13 +1,14 @@
 # SR Visual Synthesizer (VSN), native contract revision 1
 
-VSN consumes graphics in ordinary SRZ80 shared memory. Phases 0–5 implement
+VSN consumes graphics in ordinary SRZ80 shared memory. Phases 0–6 implement
 NES graphics data, packed 4bpp, packed 8bpp and 16x16 packed 8bpp backgrounds,
-VT planar 2bpp/4bpp background and sprites, RGB444/RGB555 palettes and the
-512-byte extended sprite table; this is **not an NES PPU register interface** or
-an unchanged NES-program execution environment.
-High resolution, physical interrupts and DMA remain phases 6–7. Unimplemented
-registers are reserved, read zero and ignore writes. This document freezes their
-allocation without advertising them.
+VT planar 2bpp/4bpp background and sprites, RGB444/RGB555 palettes, the
+512-byte extended sprite table and the 16x16x8 packed high-resolution mode;
+this is **not an NES PPU register interface** or an unchanged NES-program
+execution environment.
+Physical interrupts and DMA remain phase 7. Unimplemented registers are
+reserved, read zero and ignore writes. This document freezes their allocation
+without advertising them.
 
 ## Installation and configuration
 
@@ -50,12 +51,12 @@ atomic across scanline events.
 | --- | --- | --- | --- |
 | 00–03 | 4 | IDENT | RO bytes `56 53 4e 01` (VSN, revision 1) |
 | 04 | 1 | CONTROL | RW bit 0 master enable, 1 background, 2 sprites, 3 show BG in left 8, 4 show sprites in left 8, 5 strict 8-sprite limit, 6 8x16 NES sprites; reset 20 |
-| 05 | 1 | MODE | RW 0 NES, 1 packed4, 2 planar4, 3 packed8, 4 packed16; values above 4 ignored |
+| 05 | 1 | MODE | RW 0 NES, 1 packed4, 2 planar4, 3 packed8, 4 packed16, 5 hires; values above 5 ignored |
 | 06 | 1 | STATUS | bits 0 memory fault, 1 sprite-zero hit, 2 sprite overflow: sticky W1C; bit 7 live vblank, RO |
-| 07 | 1 | FEATURES | RO 1f: bit 0 NES, bit 1 packed4, bit 2 planar4, bit 3 packed8, bit 4 packed16 |
+| 07 | 1 | FEATURES | RO 3f: bit 0 NES, bit 1 packed4, bit 2 planar4, bit 3 packed8, bit 4 packed16, bit 5 hires |
 | 08–0f | 8 | interrupt allocation | reserved; pending/enables/routing in phase 7 |
-| 10 | 2 | WIDTH | RO 256 |
-| 12 | 2 | HEIGHT | RO 240 |
+| 10 | 2 | WIDTH | RO active logical width: 256 (modes 0–4), 512 (mode 5) |
+| 12 | 2 | HEIGHT | RO active logical height: 240 (modes 0–4), 480 (mode 5) |
 | 14 | 2 | SCROLL_X | RW unsigned pixel offset |
 | 16 | 2 | SCROLL_Y | RW unsigned pixel offset |
 | 18 | 1 | NES_COLOR | RW bit 0 grayscale; bits 1–3 RGB emphasis |
@@ -73,7 +74,7 @@ atomic across scanline events.
 | 39 | 1 | PLANAR | RW bit 0 BG depth, bit 1 sprite depth (0 2bpp, 1 4bpp); planar4 mode only |
 | 3a–3f | 6 | sprite allocation | reserved |
 | 40 | 4 | PALETTE_BASE | RW linear address |
-| 44 | 1 | PALETTE_FORMAT | RO, derived: 0 NES indices in mode 0; 1 RGB444 in modes 1 and 2; 2 RGB555 in modes 3 and 4 |
+| 44 | 1 | PALETTE_FORMAT | RO, derived: 0 NES indices in mode 0; 1 RGB444 in modes 1 and 2; 2 RGB555 in modes 3, 4 and 5 |
 | 45 | 1 | BACKDROP | RW packed palette index; NES always uses palette entry 0 |
 | 46–4f | 10 | palette allocation | reserved |
 | 50 | 2 | raster compare allocation | reserved |
@@ -121,6 +122,15 @@ read as `MAP_BASE + (y/16)*MAP_ROW_STRIDE + (x/16)*2`, wrap periods are
 `BG_TILE_BASE + tile*256 + (y%16)*16 + (x%16)`. Example: tile 3, local (5,2)
 reads `BG_TILE_BASE+805`. Index zero selects BACKDROP; otherwise the pixel value
 is the 8-bit palette index and descriptor bank bits are ignored.
+
+Hires (mode 5, high resolution) uses the exact same 16x16x8 packed tile format,
+descriptor map, wrap periods, palette and extended sprite table as packed16, but
+renders natively at the full 512x480 logical viewport instead of 256x240. Every
+coordinate is in output pixels: scroll advances one pixel per unit, a 16x16 tile
+covers a 16x16 output block, and a 32x30 descriptor map fills one whole frame
+with the default `MAP_WIDTH`/`MAP_HEIGHT`. There is no border and no MAME-style
+"pretend it is 8x8" approximation: both the even and odd rows of every 16x16
+tile are sampled.
 
 Planar4 (mode 2) uses the same 16-bit descriptor map, wrap periods and scroll
 units as packed4. Tiles are decoded as bitplanes instead of nibbles: BG tile
@@ -199,7 +209,7 @@ two consecutive tiles via `tile&fe`. Palette index is `bank*16+pixel` (4bpp) or
 selects the sprite depth. Sprites and background share the 256-entry RGB444
 palette; a nonzero sprite pixel is never interpreted as a NES master index.
 
-Extended sprites are the packed-mode sprite format (modes 1, 3 and 4). They read
+Extended sprites are the packed-mode sprite format (modes 1, 3, 4 and 5). They read
 the 512-byte table at SPRITE_BASE as 32 records of 16 bytes: signed little-endian
 X/i16 at 0, Y/i16 at 2, tile/u32 at 4 (low 20 bits), palette/u8 at 8 (low 4
 bits), flags/u8 at 9 (flip X 0, flip Y 1, behind BG 2, enable 3), size/u8 at 10
@@ -244,10 +254,13 @@ retain periods/line. Integer remainder accumulation makes N delays sum to
 Master disable stops memory fetches but not raster/frame time. Disabled lines
 and reset are opaque black. Enabled lines use the configured palette backdrop.
 
-The implemented modes publish a 256x240 RGBA8 surface, matching the complete
-active viewport. A future high-resolution mode must publish its actual geometry
-when that mode is implemented rather than padding the current surface with an
-unused black border. The surface is double-buffered: the raster renders into a
+The card always publishes a 512x480 RGBA8 surface. Modes 0–4 render a 256x240
+logical viewport and are upscaled with exact nearest-neighbor 2x (each logical
+pixel becomes a 2x2 block), so the whole surface is meaningful with no border.
+High-resolution mode 5 renders natively at 512x480 and fills the surface
+directly. Each of the 240 visible raster lines produces two surface rows in
+every mode: mode 5 samples two distinct 16x16-tile rows, low-res modes duplicate
+one upscaled row. The surface is double-buffered: the raster renders into a
 back buffer and publishes a whole completed frame into the front buffer at the
 end of the visible area (the post-render line), so a video query always copies
 one complete frame rather than a mid-render image. Video and timing queries only
@@ -256,9 +269,9 @@ Reset (warm or cold) resets registers, counters, faults, both framebuffers and
 scheduling remainder, preserving shared RAM. Destroy cancels the event and
 unmaps MMIO; video providers use host owner teardown.
 
-The standalone core has validated fixed-endian snapshots (`VSN1`, version 2;
-version 2 adds the second framebuffer) for register/raster/fault/framebuffer
-testing. Card ABI save/load is deliberately
+The standalone core has validated fixed-endian snapshots (`VSN1`, version 3;
+version 2 added the second framebuffer, version 3 enlarges both framebuffers to
+the 512x480 surface) for register/raster/fault/framebuffer testing. Card ABI save/load is deliberately
 unavailable until phase 8: the current host API supplies no simulated scheduler
 clock or post-restore hook, and `host.time_ns` may be fixed or wall-clock time.
 An exact remaining-event deadline cannot be restored portably through that API.

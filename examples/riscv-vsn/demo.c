@@ -29,6 +29,11 @@
  * tiles. The RAM card is 1 MiB, which leaves room for both and for the stack. */
 #define P8_TILE_BASE    0x00020000u
 #define P16_TILE_BASE   0x0005c000u
+/* The hires showcase draws a fine 1-pixel resolution strip from dedicated
+ * tiles. They live right after the 960 packed16 gradient tiles (P16_TILE_BASE
+ * + 960*256 = 0x00098000), in the free RAM below the firmware WORK region. */
+#define DETAIL_TILE0    960u
+#define DETAIL_WHITE    240u  /* PAL_FONT: fixed white for the resolution strip */
 #define WORLD_WIDTH    512
 #define WORLD_HEIGHT   480
 #define VIEW_WIDTH     256
@@ -246,6 +251,7 @@ static void build_packed8_tiles(void);
 static void build_packed16_tiles(void);
 static void build_packed_sprites(void);
 static void build_packed_maps(void);
+static void build_hires_detail(void);
 static void build_world(void) {
     volatile uint8_t *bg = (volatile uint8_t *)BG_TILE_BASE;
     volatile uint8_t *sp = (volatile uint8_t *)SP_TILE_BASE;
@@ -317,6 +323,7 @@ static void build_packed_assets(void) {
     build_packed8_tiles();
     build_packed16_tiles();
     build_packed_sprites();
+    build_hires_detail();
 }
 /* Re-emit the NES nametable+attribute world as a planar4 16-bit descriptor map
  * (tile index bits 0-11, palette bank bits 12-15), avoiding a second copy of
@@ -499,6 +506,56 @@ static void build_packed_maps(void) {
             p16[by * 64 + bx * 2 + 1] = (uint8_t)(descriptor >> 8);
         }
 }
+/* Hires showcase: a strip of 1-pixel patterns and 1-pixel-stroke text. These
+ * are ordinary 8bpp 16x16 tiles, but they only read as crisp single pixels at
+ * the native 512x480 resolution; the 256x240 modes upscale every pixel to a
+ * visible 2x2 block, so the same strip doubles as a resolution comparison. */
+static void encode_fine_glyph(volatile uint8_t *t, int glyph, unsigned x0, unsigned y0) {
+    if (glyph < 0 || glyph > 25) return;
+    for (unsigned y = 0; y < 7; ++y)
+        for (unsigned x = 0; x < 5; ++x)
+            if ((font[glyph][y] >> (4 - x)) & 1)
+                t[(y0 + y) * 16 + (x0 + x)] = DETAIL_WHITE;
+}
+static void fine_text_tile(volatile uint8_t *t, int g0, int g1) {
+    for (unsigned i = 0; i < 256; ++i) t[i] = 0;
+    encode_fine_glyph(t, g0, 1, 4);
+    encode_fine_glyph(t, g1, 7, 4);
+}
+static void build_hires_detail(void) {
+    volatile uint8_t *bank = (volatile uint8_t *)P16_TILE_BASE;
+    volatile uint8_t *t = bank + DETAIL_TILE0 * 256;
+    for (unsigned y = 0; y < 16; ++y)              /* 1px checkerboard */
+        for (unsigned x = 0; x < 16; ++x)
+            t[y * 16 + x] = ((x ^ y) & 1) ? DETAIL_WHITE : 0;
+    t = bank + (DETAIL_TILE0 + 1) * 256;
+    for (unsigned y = 0; y < 16; ++y)              /* 1px horizontal lines */
+        for (unsigned x = 0; x < 16; ++x)
+            t[y * 16 + x] = (y & 1) ? DETAIL_WHITE : 0;
+    t = bank + (DETAIL_TILE0 + 2) * 256;
+    for (unsigned y = 0; y < 16; ++y)              /* 1px vertical lines */
+        for (unsigned x = 0; x < 16; ++x)
+            t[y * 16 + x] = (x & 1) ? DETAIL_WHITE : 0;
+    t = bank + (DETAIL_TILE0 + 3) * 256;
+    for (unsigned y = 0; y < 16; ++y)              /* 1px diagonal lines */
+        for (unsigned x = 0; x < 16; ++x)
+            t[y * 16 + x] = ((x + y) & 1) ? DETAIL_WHITE : 0;
+    fine_text_tile(bank + (DETAIL_TILE0 + 4) * 256, 7, 8);    /* "HI" */
+    fine_text_tile(bank + (DETAIL_TILE0 + 5) * 256, 17, 4);   /* "RE" */
+    fine_text_tile(bank + (DETAIL_TILE0 + 6) * 256, 18, -1);  /* "S"  */
+
+    /* Row 10, columns 8-14: clear grass between the tree rows and the central
+     * crossroads, and inside packed16's default 256x240 view so the same strip
+     * can be compared crisp (hires) versus blocky (2x upscaled packed16). */
+    volatile uint8_t *p16 = (volatile uint8_t *)P16_MAP_BASE;
+    const unsigned by = 10;
+    for (unsigned i = 0; i < 7; ++i) {
+        const uint16_t descriptor = (uint16_t)(DETAIL_TILE0 + i);
+        const unsigned bx = 8 + i;
+        p16[by * 64 + bx * 2] = (uint8_t)descriptor;
+        p16[by * 64 + bx * 2 + 1] = (uint8_t)(descriptor >> 8);
+    }
+}
 
 static void poll_uart(void) {
     /* A character is a command immediately; live-mode CR/LF are separators,
@@ -514,16 +571,21 @@ static void poll_uart(void) {
         case 'd': target_x += CAMERA_STEP; break;
         case 'r': target_x = 128; target_y = 120; break;
         case 'm':
-            mode = mode == 0 ? 2 : mode == 2 ? 3 : mode == 3 ? 4 : 0;
+            mode = mode == 0 ? 2 : mode == 2 ? 3 : mode == 3 ? 4 : mode == 4 ? 5 : 0;
             mode_pending = 1;
             break;
         case '?': uart_text("WASD: pan 8 px | R: center | M: cycle mode | ?: help\r\n"); break;
         default: break; /* including CR, LF, spaces and unknown characters */
         }
+        /* Mode 5 shows the whole 512x480 world, so the camera is pinned to the
+         * origin; the clamp range shrinks to zero there and widens again when
+         * the user cycles back to a 256x240 mode. */
+        int view_w = mode == 5 ? WORLD_WIDTH : VIEW_WIDTH;
+        int view_h = mode == 5 ? WORLD_HEIGHT : VIEW_HEIGHT;
         if (target_x < 0) target_x = 0;
-        if (target_x > WORLD_WIDTH - VIEW_WIDTH) target_x = WORLD_WIDTH - VIEW_WIDTH;
+        if (target_x > WORLD_WIDTH - view_w) target_x = WORLD_WIDTH - view_w;
         if (target_y < 0) target_y = 0;
-        if (target_y > WORLD_HEIGHT - VIEW_HEIGHT) target_y = WORLD_HEIGHT - VIEW_HEIGHT;
+        if (target_y > WORLD_HEIGHT - view_h) target_y = WORLD_HEIGHT - view_h;
         if (target_x != previous_x || target_y != previous_y) camera_report();
     }
 }
@@ -532,7 +594,7 @@ static float approach(float current, int target) {
     if (difference > -0.25f && difference < 0.25f) return (float)target;
     return current + difference * 0.375f; /* real RV32F arithmetic */
 }
-static int packed_mode(void) { return mode == 3 || mode == 4; }
+static int packed_mode(void) { return mode == 3 || mode == 4 || mode == 5; }
 static uint32_t oam_primary(void) { return packed_mode() ? EXT_OAM_BASE : OAM_BASE; }
 static uint32_t oam_secondary(void) { return packed_mode() ? EXT_OAM_BACK : OAM_BACK_BASE; }
 static void put_nes_sprite(int x, int y, uint8_t tile, uint8_t attributes) {
@@ -637,10 +699,13 @@ static void select_pending_oam(void) {
     pending_oam = front_oam == oam_primary() ? oam_secondary() : oam_primary();
     oam = (volatile uint8_t *)pending_oam;
 }
+/* Mode 5 renders the full 512x480 world, so its view origin is always (0,0). */
+static int camera_cx(void) { return mode == 5 ? 0 : (int)(camera_x + 0.5f); }
+static int camera_cy(void) { return mode == 5 ? 0 : (int)(camera_y + 0.5f); }
 static void prepare_scene(void) {
     camera_x = approach(camera_x, target_x);
     camera_y = approach(camera_y, target_y);
-    int cx = (int)(camera_x + 0.5f), cy = (int)(camera_y + 0.5f);
+    int cx = camera_cx(), cy = camera_cy();
     scroll_x = (unsigned)cx; scroll_y = (unsigned)cy;
     select_pending_oam();
     build_scene(cx, cy);
@@ -648,7 +713,7 @@ static void prepare_scene(void) {
 }
 /* Rebuild the inactive table after a live mode change in the vblank window. */
 static void rebuild_scene(void) {
-    int cx = (int)(camera_x + 0.5f), cy = (int)(camera_y + 0.5f);
+    int cx = camera_cx(), cy = camera_cy();
     pending_oam = oam_primary();
     oam = (volatile uint8_t *)pending_oam;
     build_scene(cx, cy);
@@ -676,6 +741,7 @@ static const char *mode_report(void) {
     if (mode == 2) return "Mode: planar4 (4bpp planar sprites)\r\n";
     if (mode == 3) return "Mode: packed8 (8bpp + extended sprites)\r\n";
     if (mode == 4) return "Mode: packed16 (16x16 8bpp + extended sprites)\r\n";
+    if (mode == 5) return "Mode: hires (native 512x480 16x16 8bpp)\r\n";
     return "Mode: NES (2bpp)\r\n";
 }
 static void apply_mode(void) {
@@ -690,9 +756,9 @@ static void apply_mode(void) {
         vsn_write(0x34, PLANAR_SP_BASE, 4);
         vsn_write(0x40, RGB444_BASE, 4);
         vsn[0x45] = 0;              /* backdrop = palette entry 0 */
-    } else if (mode == 3 || mode == 4) {
-        const int wide = mode == 4;
-        vsn[5] = (uint8_t)mode;     /* packed8 or packed16 */
+    } else if (mode == 3 || mode == 4 || mode == 5) {
+        const int wide = mode == 4 || mode == 5;
+        vsn[5] = (uint8_t)mode;     /* packed8, packed16 or hires */
         vsn[0x39] = 0;              /* PLANAR only applies to mode 2 */
         vsn_write(0x20, wide ? P16_MAP_BASE : P8_MAP_BASE, 4);
         vsn_write(0x24, wide ? P16_TILE_BASE : P8_TILE_BASE, 4);

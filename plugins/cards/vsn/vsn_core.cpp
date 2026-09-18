@@ -37,10 +37,9 @@ uint8_t Core::read(unsigned offset) const {
     if (offset>=128) return 0;
     if (offset<4) return std::array<uint8_t,4>{'V','S','N',1}[offset];
     if (offset==6) return registers_[6] | (vblank_ ? 0x80 : 0);
-    if (offset==7) return 0x1f;
-    if (offset==0x10) return 0;
-    if (offset==0x11) return 1;
-    if (offset==0x12) return 240;
+    if (offset==7) return 0x3f;
+    if (offset==0x10 || offset==0x11) return uint8_t(logical_width() >> ((offset-0x10)*8));
+    if (offset==0x12 || offset==0x13) return uint8_t(logical_height() >> ((offset-0x12)*8));
     if (offset==0x44) return registers_[5]==0 ? 0 : (registers_[5]>=3 ? 2 : 1);
     if (offset==0x54) return uint8_t(line_);
     if (offset==0x55) return uint8_t(line_>>8);
@@ -49,7 +48,7 @@ uint8_t Core::read(unsigned offset) const {
 }
 void Core::write(unsigned offset, uint8_t value) {
     if (offset==4) registers_[offset]=value&0x7f;
-    else if (offset==5) { if (value<=4) registers_[offset]=value; }
+    else if (offset==5) { if (value<=5) registers_[offset]=value; }
     else if (offset==6) registers_[offset] &= ~(value&7);
     else if (offset==0x18) registers_[offset]=value&15;
     else if (offset==0x38) registers_[offset]=value&3;
@@ -74,16 +73,38 @@ bool Core::store(uint64_t address, uint8_t value) {
     if (address>UINT32_MAX || !memory_.write(address,value)) { fault(address,true); return false; }
     return true;
 }
-void Core::blank_line() {
-    const size_t begin=size_t(line_)*surface_width*4;
-    for (size_t x=0; x<width; ++x) {
-        const size_t p=begin+x*4;
-        back_[p]=back_[p+1]=back_[p+2]=0;
-        back_[p+3]=255;
+void Core::blank_rows() {
+    // One raster line maps to two 512-wide surface rows in every mode.
+    for (unsigned r=0; r<2; ++r) {
+        const size_t begin=(size_t(line_)*2+r)*surface_width*4;
+        for (size_t x=0; x<surface_width; ++x) {
+            const size_t p=begin+x*4;
+            back_[p]=back_[p+1]=back_[p+2]=0;
+            back_[p+3]=255;
+        }
+    }
+}
+void Core::render_row(const std::array<uint8_t,128> &snapshot, Memory &gateway,
+                      unsigned y, unsigned logical_width, std::span<uint8_t> rgba) {
+    const VideoLine line{frame_,y,logical_width,region_,snapshot};
+    const auto effects=renderer_->render_scanline(line,gateway,rgba);
+    if (effects.sprite_zero) registers_[6] |= 2;
+    if (effects.sprite_overflow) registers_[6] |= 4;
+}
+void Core::upscale_row(const uint8_t *source) {
+    // Nearest-neighbor 2x: one 256-wide logical row becomes two identical
+    // 512-wide surface rows (exact integer scaling, no filtering).
+    for (unsigned r=0; r<2; ++r) {
+        uint8_t *dest=back_.data()+(size_t(line_)*2+r)*surface_width*4;
+        for (unsigned x=0; x<width; ++x) {
+            const uint8_t *s=source+x*4;
+            uint8_t *d=dest+x*8;
+            for (unsigned c=0; c<4; ++c) d[c]=d[4+c]=s[c];
+        }
     }
 }
 void Core::render_line() {
-    if (!(registers_[4]&1)) { blank_line(); return; }
+    if (!(registers_[4]&1)) { blank_rows(); return; }
     // This gateway keeps fault/strict policy independent of rendering style.
     // Wide addresses survive layout arithmetic all the way to the core check.
     class Gateway final : public Memory {
@@ -95,15 +116,24 @@ void Core::render_line() {
         Core &core_;
     } gateway(*this);
     const auto snapshot=registers_;
-    const VideoLine line{frame_,line_,width,region_,snapshot};
     rendering_=true;
     try {
-        const auto effects=renderer_->render_scanline(line,gateway,
-            std::span(back_).subspan(size_t(line_)*surface_width*4,width*4));
-        if (effects.sprite_zero) registers_[6] |= 2;
-        if (effects.sprite_overflow) registers_[6] |= 4;
+        if (snapshot[5]==5) {
+            // High-resolution mode renders two native 512-wide rows per line.
+            for (unsigned r=0; r<2; ++r) {
+                const unsigned y=line_*2+r;
+                render_row(snapshot,gateway,y,surface_width,
+                    std::span(back_).subspan(size_t(y)*surface_width*4,surface_width*4));
+            }
+        } else {
+            // Low-resolution modes render one 256-wide row, then upscale it to
+            // fill two surface rows with nearest-neighbor 2x.
+            std::array<uint8_t,width*4> row{};
+            render_row(snapshot,gateway,line_,width,std::span<uint8_t>(row));
+            upscale_row(row.data());
+        }
     } catch (const AbortLine &) {
-        blank_line();
+        blank_rows();
     } catch (...) {
         rendering_=false;
         throw;
@@ -122,7 +152,7 @@ std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;
     out.reserve(164+2*frame_bytes);
     state::append(out,0x314e5356,4); // VSN1
-    state::append(out,2,2);
+    state::append(out,3,2);
     state::append(out,unsigned(region_),1); state::append(out,strict_,1);
     out.insert(out.end(),registers_.begin(),registers_.end());
     state::append(out,line_,2); state::append(out,vblank_,1); state::append(out,fault_write_,1);
@@ -134,7 +164,7 @@ std::vector<uint8_t> Core::save() const {
 bool Core::load(std::span<const uint8_t> data) {
     constexpr size_t header=164;
     if (data.size()!=header+2*frame_bytes || state::get(data,0,4)!=0x314e5356 ||
-        state::get(data,4,2)!=2 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
+        state::get(data,4,2)!=3 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
         state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1) return false;
     // Validate all stored register bytes, including reserved and masked bits,
     // before touching live state. Status is stored separately from live blank.
@@ -142,14 +172,11 @@ bool Core::load(std::span<const uint8_t> data) {
     for (unsigned i=0; i<128; ++i) validator.write(i,data[8+i]);
     validator.registers_[6]=data[14]&7;
     if (!std::equal(validator.registers_.begin(),validator.registers_.end(),data.begin()+8)) return false;
-    // Every shipped output pixel is opaque; reject corrupt alpha/border data.
+    // Every shipped output pixel is opaque; the surface has no border since
+    // low-res modes are upscaled to fill it exactly.
     const auto valid_frame=[&](size_t off) {
-        for (size_t i=0; i<frame_bytes; i+=4) {
+        for (size_t i=0; i<frame_bytes; i+=4)
             if (data[off+i+3]!=255) return false;
-            const size_t pixel=i/4;
-            if ((pixel%surface_width>=width || pixel/surface_width>=height) &&
-                (data[off+i] || data[off+i+1] || data[off+i+2])) return false;
-        }
         return true;
     };
     if (!valid_frame(header) || !valid_frame(header+frame_bytes)) return false;

@@ -3,10 +3,10 @@
 A self-contained **RV32IMF + RAM + ROM + VSN + UART** demo. Explore a 512×480
 world of grass, dunes, water and ruins through a 256×240 viewport. Background
 tiles scroll while butterflies patrol and gems shimmer. Press `M` to cycle the
-renderer live through four VSN modes: NES graphics (2bpp), VT planar4, packed
-8bpp, and 16x16 packed 8bpp. The packed modes repaint the world with a smooth
-screen-wide RGB555 colour gradient. All artwork is original and generated into
-shared RAM by the firmware.
+renderer live through five VSN modes: NES graphics (2bpp), VT planar4, packed
+8bpp, 16x16 packed 8bpp, and the native 512×480 high-resolution mode. The packed
+modes repaint the world with a smooth screen-wide RGB555 colour gradient. All
+artwork is original and generated into shared RAM by the firmware.
 
 ![The four environments meeting at the center of the world](preview.png)
 
@@ -23,7 +23,7 @@ Open the VSN video display and the console for endpoint **`vsn.uart`**. Turn on
 | --- | --- |
 | W / A / S / D | Move the camera up / left / down / right by 8 pixels |
 | R | Return to the central crossroads (128, 120) |
-| M | Cycle NES → planar4 → packed8 → packed16 |
+| M | Cycle NES → planar4 → packed8 → packed16 → hires |
 | ? | Print the controls |
 
 Uppercase works too. Each character acts immediately; the newline added by
@@ -37,8 +37,9 @@ arithmetic smoothly moves the view toward it. Camera coordinates are the
 viewport's world origin, bounded to X=0…256, Y=0…240. Moving right makes world
 objects move left on screen. Animation continues when no input is sent.
 
-The VSN surface is 256×240, matching this demo's active viewport and the
-preview above.
+The VSN surface is always 512×480. The 256×240 modes are upscaled to it with
+exact nearest-neighbor 2x, while the hires mode fills it natively and shows the
+entire 512×480 world at once (its camera is pinned to the origin).
 
 ## How it works
 
@@ -64,7 +65,14 @@ whose first sixteen entries reproduce the four NES background banks.
 
 The next two presses select VSN's packed 8bpp renderers. **packed8** (MODE 3)
 reads one byte per pixel from a 64×60 descriptor map, and **packed16** (MODE 4)
-reads 16×16 tiles from a 32×30 map. These modes show what 8bpp plus RGB555 can
+reads 16×16 tiles from a 32×30 map. The fifth press selects **hires** (MODE 5),
+which uses packed16's exact 16×16×8 tile, descriptor-map, palette and sprite
+formats but renders natively at 512×480 rather than a 256×240 viewport, so the
+whole world is visible at once. A fine-detail strip — a 1-pixel checkerboard,
+horizontal/vertical/diagonal lines and the 1-pixel-stroke text **"HI RES"** —
+sits on row 10 and is the resolution showcase: it is crisp in hires and turns
+into visible 2×2 blocks in packed16, where the same tiles are upscaled. These
+modes show what 8bpp plus RGB555 can
 do that NES and planar4 cannot: instead of banking a handful of flat tones, the
 firmware paints the world with a single continuous colour field. Entries 0–127
 of the palette are a cyclic eight-stop gradient, and every world cell gets its

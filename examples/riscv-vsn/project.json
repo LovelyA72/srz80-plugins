@@ -3,7 +3,7 @@
   "name": "riscv-vsn",
   "metadata": {
     "title": "VSN • Four Corners",
-    "description": "RV32IMF walks a four-screen tile world through four VSN renderers: NES 2bpp, planar4, and packed 8bpp/16x16 modes that repaint it as a smooth screen-wide RGB555 gradient with extended 16x16 sprites. Send WASD through the vsn.uart console to move the camera; M cycles modes."
+    "description": "RV32IMF walks a four-screen tile world through five VSN renderers: NES 2bpp, planar4, packed 8bpp/16x16, and native 512x480 hires, the packed modes repainting it as a smooth screen-wide RGB555 gradient with extended 16x16 sprites. Send WASD through the vsn.uart console to move the camera; M cycles modes."
   },
   "seed": 1,
   "epoch_ns": 0,

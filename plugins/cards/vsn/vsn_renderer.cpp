@@ -59,7 +59,7 @@ public:
         latch_palette();
         const auto control=r(4);
         const auto backdrop=latch_.palette[r(5) == 0 ? 0 : r(0x45)];
-        std::array<uint8_t,256> background{};
+        std::array<uint8_t,512> background{};
         for (unsigned x=0; x<line_.width; ++x) {
             if ((control & 2) && (r(5) != 0 || x>=8 || (control & 8)))
                 background[x]=background_pixel(x, line_.y);
@@ -115,8 +115,8 @@ private:
                 else palette[i]=nes_color(fetch_direct(base+i));
             }
         } else {
-            // Modes 3/4 use linear RGB555; packed4 and planar4 use RGB444.
-            const bool rgb555=(mode==3 || mode==4);
+            // Modes 3/4/5 use linear RGB555; packed4 and planar4 use RGB444.
+            const bool rgb555=(mode==3 || mode==4 || mode==5);
             for (unsigned i=0; i<256; ++i) {
                 const uint16_t low=fetch_direct(base+i*2);
                 const uint16_t word=low | (uint16_t(fetch_direct(base+i*2+1))<<8);
@@ -182,8 +182,10 @@ private:
             const uint16_t descriptor=descriptor_at(layout::packed_map(v(0x20,4),v(0x28,2),x,y));
             return cache_.fetch(layout::packed8(v(0x24,4),descriptor&4095,x&7,y&7));
         }
-        if (r(5)==4) {
+        if (r(5)==4 || r(5)==5) {
             // Packed 16x16 8bpp: tile rows span 16 map columns and 16 pixel rows.
+            // Mode 5 (high resolution) uses the same 16x16x8 packed tile format
+            // as mode 4, rendered natively at 512x480 instead of 256x240.
             x %= unsigned(r(0x2a) ? r(0x2a) : 256)*16;
             y %= unsigned(r(0x2b) ? r(0x2b) : 256)*16;
             const uint16_t descriptor=descriptor_at(layout::packed_map16(v(0x20,4),v(0x28,2),x,y));
@@ -198,9 +200,9 @@ private:
         const auto pixel=pattern(layout::nes_pattern(v(0x24,4),r(0x38)&1,tile,y&7),x&7);
         return pixel ? uint8_t(bank*4+pixel) : 0;
     }
-    void sprites(const std::array<uint8_t,256> &background) {
+    void sprites(const std::array<uint8_t,512> &background) {
         latch_oam();
-        std::array<bool,256> occupied{};
+        std::array<bool,512> occupied{};
         const unsigned height=(r(4)&64) ? 16 : 8;
         const bool planar=(r(5)==2);
         const bool sprite4bpp=planar && (r(0x39)&2);
@@ -248,10 +250,10 @@ private:
     // Extended 512-byte table: 32 records of 16 bytes with signed top-left
     // coordinates, so partial and fully offscreen sprites clip per pixel.
     // Record order is priority order and the lowest record wins pixel ties.
-    void extended_sprites(const std::array<uint8_t,256> &background) {
+    void extended_sprites(const std::array<uint8_t,512> &background) {
         latch_oam();
-        std::array<bool,256> occupied{};
-        const bool bpp8=(r(5)==3 || r(5)==4);
+        std::array<bool,512> occupied{};
+        const bool bpp8=(r(5)==3 || r(5)==4 || r(5)==5);
         const int line=int(line_.y);
         for (unsigned i=0; i<32; ++i) {
             const auto sprite=layout::ext_sprite(&latch_.oam[i*16]);

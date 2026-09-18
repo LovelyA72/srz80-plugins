@@ -35,8 +35,12 @@ constexpr unsigned control=0x04, mode=0x05, status=0x06, scroll_x=0x14, scroll_y
 
 class Core {
 public:
+    // Low-resolution logical viewport shared by modes 0-4. The host surface is
+    // always the high-resolution 512x480 frame; low-res modes are nearest-
+    // neighbor 2x upscaled by the core, high-res mode renders natively.
     static constexpr unsigned width=256, height=240;
-    static constexpr unsigned surface_width=width, surface_height=height;
+    static constexpr unsigned hires_width=512, hires_height=480;
+    static constexpr unsigned surface_width=hires_width, surface_height=hires_height;
     static constexpr size_t frame_bytes=surface_width*surface_height*4;
     using Color = std::array<uint8_t, 4>;
     explicit Core(Memory &memory, Region region=Region::ntsc, bool strict=false,
@@ -65,7 +69,12 @@ private:
     struct AbortLine {};
     void fault(uint64_t address, bool writing);
     void render_line();
-    void blank_line();
+    void render_row(const std::array<uint8_t,128> &snapshot, Memory &gateway,
+                    unsigned y, unsigned logical_width, std::span<uint8_t> rgba);
+    void upscale_row(const uint8_t *source);
+    void blank_rows();
+    unsigned logical_width() const { return registers_[5]==5 ? hires_width : width; }
+    unsigned logical_height() const { return registers_[5]==5 ? hires_height : height; }
 
     Memory &memory_;
     Region region_;

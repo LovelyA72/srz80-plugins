@@ -151,7 +151,7 @@ public:
     }
     SrhStatus property_get(unsigned index, SrhValue *out) const {
         if (index>=property_count || !srz80::sdk::valid(out)) return SRH_INVALID;
-        const uint64_t values[]={core_.read(5),Core::width,Core::height,core_.frame(),core_.line(),
+        const uint64_t values[]={core_.read(5),Core::surface_width,Core::surface_height,core_.frame(),core_.line(),
             core_.value(0x20,4),core_.value(0x24,4),core_.value(0x30,4),core_.value(0x40,4),
             core_.read(6),core_.fault_address(),core_.fault_was_write(),core_.fault_count()};
         *out={SRH_INIT(SrhValue),values[index],0,{0}};
