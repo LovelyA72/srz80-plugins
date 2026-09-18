@@ -51,8 +51,8 @@
         "memory_space": "rv.memory",
         "region": "NTSC",
         "strict_memory": true,
-        "nmi_signal": "",
-        "irq_signal": ""
+        "nmi_signal": "NMI",
+        "irq_signal": "IRQ"
       }
     },
     {

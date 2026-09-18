@@ -1,14 +1,13 @@
 # SR Visual Synthesizer (VSN), native contract revision 1
 
-VSN consumes graphics in ordinary SRZ80 shared memory. Phases 0–6 implement
+VSN consumes graphics in ordinary SRZ80 shared memory. Phases 0–7 implement
 NES graphics data, packed 4bpp, packed 8bpp and 16x16 packed 8bpp backgrounds,
 VT planar 2bpp/4bpp background and sprites, RGB444/RGB555 palettes, the
-512-byte extended sprite table and the 16x16x8 packed high-resolution mode;
-this is **not an NES PPU register interface** or an unchanged NES-program
-execution environment.
-Physical interrupts and DMA remain phase 7. Unimplemented registers are
-reserved, read zero and ignore writes. This document freezes their allocation
-without advertising them.
+512-byte extended sprite table, the 16x16x8 packed high-resolution mode,
+vblank/raster/DMA interrupts and chunked copy/fill DMA; this is **not an NES
+PPU register interface** or an unchanged NES-program execution environment.
+Unimplemented registers are reserved, read zero and ignore writes. This
+document freezes their allocation without advertising them.
 
 ## Installation and configuration
 
@@ -22,17 +21,20 @@ Configuration is a JSON object; unknown keys and wrong types fail creation.
 | memory_space | cpu0.mem | nonempty name, at most 128 bytes |
 | region | NTSC | NTSC, PAL, VGA |
 | raster_clock_hz | region crystal | integer 1–1000000000 Hz |
-| nmi_signal | NMI | name up to 128 bytes, empty disables; reserved until phase 7 |
-| irq_signal | IRQ | name up to 128 bytes, empty disables; reserved until phase 7 |
+| nmi_signal | NMI | name up to 128 bytes, empty disables the NMI line |
+| irq_signal | IRQ | name up to 128 bytes, empty disables the IRQ line |
 | strict_memory | false | boolean; abort a faulty visible line and replace it with opaque black |
 
 Requires `host.resources.v1` named lookup and `host.video.v1` extended surface
-registration/timing. Signals are not required or driven in phases 0–4. Missing
-spaces, invalid mapping size/overflow, mapping conflicts and unavailable required
-callbacks fail with a creation diagnostic. IO and memory may be the same space:
-reset has no active fetches, and every later fetch is checked against the entire
-MMIO window. No recursive MMIO reads are performed. The public host ABI has no
-space-size query; out-of-space errors are reported by host.read. Unclaimed addresses inside a
+registration/timing. A non-empty `nmi_signal` or `irq_signal` additionally
+requires `host.signals.v1` plus host `signal_find`/`signal_drive`; a missing
+named signal fails creation. Empty both names disables interrupts entirely and
+skips the signals requirement. Missing spaces, invalid mapping size/overflow,
+mapping conflicts and unavailable required callbacks fail with a creation
+diagnostic. IO and memory may be the same space: reset has no active fetches,
+and every later fetch is checked against the entire MMIO window. No recursive
+MMIO reads are performed. The public host ABI has no space-size query;
+out-of-space errors are reported by host.read. Unclaimed addresses inside a
 space return the host's configured fallback as successful reads: the current
 ABI cannot distinguish these from mapped bytes. VSN therefore faults on host
 errors, arithmetic overflow and MMIO aliasing; it cannot detect bus fallback.
@@ -54,7 +56,9 @@ atomic across scanline events.
 | 05 | 1 | MODE | RW 0 NES, 1 packed4, 2 planar4, 3 packed8, 4 packed16, 5 hires; values above 5 ignored |
 | 06 | 1 | STATUS | bits 0 memory fault, 1 sprite-zero hit, 2 sprite overflow: sticky W1C; bit 7 live vblank, RO |
 | 07 | 1 | FEATURES | RO 3f: bit 0 NES, bit 1 packed4, bit 2 planar4, bit 3 packed8, bit 4 packed16, bit 5 hires |
-| 08–0f | 8 | interrupt allocation | reserved; pending/enables/routing in phase 7 |
+| 08 | 1 | IRQ_PENDING | RW W1C: bit 0 vblank, 1 raster, 2 DMA complete, 3 DMA fault. Write 1 clears a cause, write 0 no-op |
+| 09 | 1 | IRQ_ENABLE | RW mask 0f: same bits enable each cause. Vblank drives NMI; bits 1–3 drive IRQ |
+| 0a–0f | 6 | interrupt allocation | reserved |
 | 10 | 2 | WIDTH | RO active logical width: 256 (modes 0–4), 512 (mode 5) |
 | 12 | 2 | HEIGHT | RO active logical height: 240 (modes 0–4), 480 (mode 5) |
 | 14 | 2 | SCROLL_X | RW unsigned pixel offset |
@@ -77,19 +81,49 @@ atomic across scanline events.
 | 44 | 1 | PALETTE_FORMAT | RO, derived: 0 NES indices in mode 0; 1 RGB444 in modes 1 and 2; 2 RGB555 in modes 3, 4 and 5 |
 | 45 | 1 | BACKDROP | RW packed palette index; NES always uses palette entry 0 |
 | 46–4f | 10 | palette allocation | reserved |
-| 50 | 2 | raster compare allocation | reserved |
+| 50 | 2 | RASTER | RW scanline at which the raster IRQ cause asserts |
 | 52 | 2 | CURRENT_X | RO zero (scanline granularity) |
 | 54 | 2 | CURRENT_Y | RO next scanline |
 | 56 | 8 | FRAME | RO little-endian frame count |
 | 5e–5f | 2 | raster allocation | reserved |
-| 60–6f | 16 | DMA allocation | reserved: source 60/u32, destination 64/u32, count 68/u32, command 6c/u8, status 6d/u8, fill 6e/u8 |
+| 60 | 4 | DMA_SRC | RW live source address (copy); ignored while busy |
+| 64 | 4 | DMA_DST | RW live destination address; ignored while busy |
+| 68 | 4 | DMA_COUNT | RW live remaining byte count; ignored while busy |
+| 6c | 1 | DMA_CMD | bit 1 fill, 2 hold source, 3 hold destination (latched, read back); bit 0 start is a write strobe and reads 0 |
+| 6d | 1 | DMA_STATUS | RO bit 0 busy, 1 complete, 2 fault; complete/fault sticky until the next start |
+| 6e | 1 | DMA_FILL | RW fill byte |
+| 6f | 1 | DMA allocation | reserved |
 | 70–7f | 16 | extended allocation | reserved |
 
-Interrupt allocation for phase 7: 08 pending W1C, 09 enable, with bits 0 vblank,
-1 raster, 2 DMA complete, 3 DMA fault. Vblank routes to NMI; others to IRQ.
-Acknowledgement clears causes only, never enables. No interrupt behavior is
-implemented yet; STATUS is independent. Future DMA command bits: start 0,
-fill 1, hold source 2, hold destination 3; status busy 0, complete 1, fault 2.
+Interrupts are sticky, independently enabled, and recomputed as one physical
+level each. `IRQ_PENDING` (0x08) is W1C: writing a 1 acknowledges that cause
+only and never changes enables. `IRQ_ENABLE` (0x09) masks to bits 0–3. The
+vblank cause (bit 0) drives the NMI signal; raster (bit 1), DMA complete
+(bit 2) and DMA fault (bit 3) drive the IRQ signal. A signal is asserted when
+any of its enabled causes is pending and released only when none remain, so
+acknowledging one cause keeps a shared line driven while others are live.
+`STATUS` (0x06) is independent of these causes.
+
+The vblank cause asserts at line 241, when the live vblank status bit (STATUS
+bit 7) turns on. The raster cause asserts at the start of processing the
+scanline equal to `RASTER` (0x50), once per frame while `RASTER < line_count`;
+values at or above the total line count never match. Both causes re-assert on
+each frame unless acknowledged, and acknowledgement is not required to keep
+rendering.
+
+DMA transfers `DMA_SRC`→`DMA_DST` in copy mode, or writes `DMA_FILL` in fill
+mode, up to `DMA_COUNT` bytes, advancing 16 bytes per scanline event (one
+chunk per scheduler boundary; a transfer never runs to completion inside the
+MMIO write that starts it). Writing `DMA_CMD` with bit 0 set starts a transfer
+and latches bits 1–3 (fill, hold source, hold destination); a start while busy
+is ignored, and writes to the live address/count registers while busy are
+ignored. Holding source or destination keeps that address fixed while the
+other advances. On the last byte the transfer sets `DMA_STATUS` complete and
+the DMA-complete cause. Any failed source read or destination write — host
+error, out-of-space, or MMIO alias — records the usual memory fault, sets
+`DMA_STATUS` fault, asserts the DMA-fault cause, and aborts the transfer with
+the remaining count and addresses preserved at the fault point. `strict_memory`
+affects rendering only; DMA faults are always terminal for the transfer.
 
 ## Shared formats and address examples
 
@@ -240,7 +274,9 @@ separate mode IDs.
 One scheduled event processes one line. Reset starts at pre-render (last line),
 frame 0; the first event clears hit/overflow and advances to line 0/frame 1.
 Visible lines 0–239, post-render 240, vblank 241 through total-2, pre-render
-at total-1. Vblank status changes on processing lines 241 and total-1.
+at total-1. Vblank status changes on processing lines 241 and total-1; the
+vblank interrupt cause and the raster compare cause are evaluated and DMA
+advances one chunk on the same line event, before the visible line renders.
 
 | Region | Default master Hz | Master periods/line | Total lines | Frame rate |
 | --- | --- | --- | --- | --- |
@@ -269,14 +305,18 @@ Reset (warm or cold) resets registers, counters, faults, both framebuffers and
 scheduling remainder, preserving shared RAM. Destroy cancels the event and
 unmaps MMIO; video providers use host owner teardown.
 
-The standalone core has validated fixed-endian snapshots (`VSN1`, version 3;
-version 2 added the second framebuffer, version 3 enlarges both framebuffers to
-the 512x480 surface) for register/raster/fault/framebuffer testing. Card ABI save/load is deliberately
-unavailable until phase 8: the current host API supplies no simulated scheduler
-clock or post-restore hook, and `host.time_ns` may be fixed or wall-clock time.
-An exact remaining-event deadline cannot be restored portably through that API.
-No wall-clock reads are used. Shared memory belongs to its RAM/ROM owner.
-Runtime properties are read-only.
+The standalone core has validated fixed-endian snapshots (`VSN1`, version 4;
+version 2 added the second framebuffer, version 3 enlarged both framebuffers to
+the 512x480 surface, version 4 makes the interrupt-pending, raster-compare and
+DMA registers meaningful — their state is register-resident, so the byte layout
+is unchanged). Snapshots round-trip mid-DMA transfers and pending/enabled causes
+at every raster phase; a load re-latches palette/OAM from shared memory at the
+next frame. Card ABI save/load is deliberately unavailable until phase 8: the
+current host API supplies no simulated scheduler clock or post-restore hook,
+and `host.time_ns` may be fixed or wall-clock time. An exact remaining-event
+deadline cannot be restored portably through that API. No wall-clock reads are
+used. Shared memory belongs to its RAM/ROM owner. Runtime properties are
+read-only.
 
 ## Implementation boundaries and licensing
 

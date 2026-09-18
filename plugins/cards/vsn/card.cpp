@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SRZ80 transport/lifecycle adapter. No tile/OAM/palette layout knowledge here.
 #include <boundary.hpp>
+#include <srz80/signals.h>
 #include <nlohmann/json.hpp>
 #include "vsn_core.hpp"
 #include <algorithm>
@@ -103,8 +104,15 @@ public:
     ~Card() {
         if (event_) host_.cancel(host_.context,event_);
         if (mapping_) host_.unmap(host_.context,mapping_);
+        if (signals_ && signals_->release) {
+            if (nmi_signal_) signals_->release(signals_->context,owner_,nmi_signal_);
+            if (irq_signal_) signals_->release(signals_->context,owner_,irq_signal_);
+        }
         // Video has no unregister callback: the ABI host tears down providers
         // by owner on failed creation/destroy, as for sibling video cards.
+    }
+    void connect_signals(const SrhHostSignalsV1 *signals, SrhHandle nmi, SrhHandle irq) {
+        signals_=signals; nmi_signal_=nmi; irq_signal_=irq;
     }
     SrhStatus start(const SrhConfig &config, const SrhHostVideoV1 &video) {
         SrhMapping mapping{SRH_INIT(SrhMapping),config.space,base_,base_+127,config.priority,
@@ -125,6 +133,7 @@ public:
             event_=0;
         }
         core_.reset(); clock_.remainder=0;
+        update_signals();
         return arm(clock_.next_delay(),event_);
     }
     static SrhStatus SRH_CALL read(void *context, uint64_t address, uint8_t *out) {
@@ -137,13 +146,15 @@ public:
         auto &card=*static_cast<Card*>(context);
         if (address<card.base_ || address-card.base_>=128 || card.memory_.active()) return SRH_INVALID;
         card.core_.write(unsigned(address-card.base_),value);
+        card.update_signals();
         return SRH_OK;
     }
-    static constexpr unsigned property_count=13;
+    static constexpr unsigned property_count=18;
     static SrhStatus property_info(unsigned index, SrhProperty *out) {
         static constexpr const char *names[]={"mode","width","height","frame","scanline",
             "map_base","tile_base","sprite_base","palette_base","status","fault_address",
-            "fault_was_write","fault_count"};
+            "fault_was_write","fault_count","raster_compare","irq_pending","irq_enable",
+            "dma_status","dma_remaining"};
         if (index>=property_count || !srz80::sdk::valid(out)) return SRH_INVALID;
         *out={SRH_INIT(SrhProperty),names[index],"VSN","Read-only runtime state",SRH_UNSIGNED,
               64,10,0,nullptr,SRH_PROPERTY_RUNTIME};
@@ -153,11 +164,34 @@ public:
         if (index>=property_count || !srz80::sdk::valid(out)) return SRH_INVALID;
         const uint64_t values[]={core_.read(5),Core::surface_width,Core::surface_height,core_.frame(),core_.line(),
             core_.value(0x20,4),core_.value(0x24,4),core_.value(0x30,4),core_.value(0x40,4),
-            core_.read(6),core_.fault_address(),core_.fault_was_write(),core_.fault_count()};
+            core_.read(6),core_.fault_address(),core_.fault_was_write(),core_.fault_count(),
+            core_.value(0x50,2),core_.read(8),core_.read(9),core_.read(0x6d),core_.value(0x68,4)};
         *out={SRH_INIT(SrhValue),values[index],0,{0}};
         return SRH_OK;
     }
 private:
+    // Recompute both physical interrupt lines from the core's pending/enable
+    // state. Asserting drives the signal high; releasing yields ownership so
+    // other IRQ sources can still drive a shared line. Best-effort: the host
+    // validated the callbacks at creation, and a transient drive failure must
+    // never stop the raster.
+    void drive_signal(SrhHandle signal, bool level, bool &cached) {
+        if (!signal || level==cached) return;
+        if (level) {
+            if (host_.signal_drive)
+                host_.signal_drive(host_.context,owner_,signal,1000,0);
+        } else {
+            if (signals_ && signals_->release)
+                signals_->release(signals_->context,owner_,signal);
+            else if (host_.signal_drive)
+                host_.signal_drive(host_.context,owner_,signal,0,0);
+        }
+        cached=level;
+    }
+    void update_signals() {
+        drive_signal(nmi_signal_,core_.nmi_asserted(),nmi_level_);
+        drive_signal(irq_signal_,core_.irq_asserted(),irq_level_);
+    }
     SrhStatus arm(uint64_t delay, SrhHandle &event) {
         return host_.schedule(host_.context,owner_,delay,tick,this,&event);
     }
@@ -167,6 +201,7 @@ private:
             auto &card=*static_cast<Card*>(context);
             card.event_=0;
             card.core_.tick();
+            card.update_signals();
             return card.arm(card.clock_.next_delay(),card.event_);
         });
     }
@@ -187,6 +222,9 @@ private:
     }
     const ShouryoHost &host_;
     SrhHandle owner_,mapping_=0,surface_=0,event_=0;
+    SrhHandle nmi_signal_=0,irq_signal_=0;
+    const SrhHostSignalsV1 *signals_=nullptr;
+    bool nmi_level_=false,irq_level_=false;
     uint64_t base_;
     HostMemory memory_;
     Core core_;
@@ -228,7 +266,29 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             !video->register_video_ex || !video->set_video_timing) {
             diagnostic(config,"VSN requires extended video registration and timing callbacks"); return SRH_UNAVAILABLE;
         }
+        // Interrupt signals are optional: an empty nmi_signal/irq_signal config
+        // disables the corresponding line and skips the signals requirement.
+        const SrhHostSignalsV1 *signals=nullptr;
+        SrhHandle nmi=0,irq=0;
+        if (!parsed.nmi.empty() || !parsed.irq.empty()) {
+            if (host->query(host->context,"host.signals.v1",&extension)!=SRH_OK || !extension) {
+                diagnostic(config,"VSN requires host.signals.v1"); return SRH_UNAVAILABLE;
+            }
+            signals=static_cast<const SrhHostSignalsV1*>(extension);
+            if (!srz80::sdk::valid(signals) || !signals->release || !host->signal_find || !host->signal_drive) {
+                diagnostic(config,"VSN requires valid host.signals.v1 release and signal find/drive callbacks"); return SRH_UNAVAILABLE;
+            }
+            if (!parsed.nmi.empty() &&
+                (host->signal_find(host->context,parsed.nmi.c_str(),&nmi)!=SRH_OK || !nmi)) {
+                diagnostic(config,"VSN NMI signal not found: "+parsed.nmi); return SRH_NOT_FOUND;
+            }
+            if (!parsed.irq.empty() &&
+                (host->signal_find(host->context,parsed.irq.c_str(),&irq)!=SRH_OK || !irq)) {
+                diagnostic(config,"VSN IRQ signal not found: "+parsed.irq); return SRH_NOT_FOUND;
+            }
+        }
         auto card=std::make_unique<Card>(*host,owner,*config,parsed,memory);
+        card->connect_signals(signals,nmi,irq);
         const auto status=card->start(*config,*video);
         if (status!=SRH_OK) { diagnostic(config,"VSN could not map MMIO, register video or schedule raster"); return status; }
         *out=card.release(); return SRH_OK;

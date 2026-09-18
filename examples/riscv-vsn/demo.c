@@ -39,6 +39,13 @@
 #define VIEW_WIDTH     256
 #define VIEW_HEIGHT    240
 #define CAMERA_STEP    8
+/* Phase 7: the raster interrupt splits the frame at SPLIT_LINE into a live
+ * player view (top) and a fixed RUINS-corner overview (bottom), and VSN DMA
+ * uploads the sprite table from a staging buffer into the active OAM. */
+#define SPLIT_LINE     184
+#define OVERVIEW_X     256
+#define OVERVIEW_Y     240
+#define OAM_STAGE_BASE 0x00099000u
 
 static volatile uint8_t *const vsn = (volatile uint8_t *)VSN_BASE;
 static volatile uint8_t *const uart = (volatile uint8_t *)UART_BASE;
@@ -46,6 +53,9 @@ static volatile uint8_t *const map = (volatile uint8_t *)MAP_BASE;
 static volatile uint8_t *oam;
 static uint32_t front_oam, pending_oam;
 static unsigned scroll_x, scroll_y;
+static volatile uint8_t dma_done;   /* set by the IRQ handler on DMA completion */
+static uint8_t split_enabled;       /* raster-split overview toggle */
+static uint8_t mode;                /* 0 NES, 2 planar4 */
 
 /* Pattern rows use NES pixel indices 0..3. The encoder below writes the two
  * bitplanes, so the source art stays readable and independent of packing. */
@@ -117,7 +127,6 @@ static int target_x, target_y;
 static float camera_x, camera_y;
 static uint8_t next_sprite;
 static uint32_t animation;
-static uint8_t mode;          /* 0 NES, 2 planar4 */
 static uint8_t mode_pending;  /* set when a toggle must be applied in vblank */
 
 static void uart_text(const char *text) {
@@ -136,6 +145,70 @@ static void vsn_write(unsigned offset, uint32_t value, unsigned bytes) {
     /* All VSN fields are byte-addressed, little-endian. */
     for (unsigned i = 0; i < bytes; ++i) vsn[offset + i] = (uint8_t)(value >> (i * 8));
 }
+
+/* ---- VSN interrupts and DMA (phase 7) ---- */
+#define REG_PENDING     0x08u
+#define REG_ENABLE      0x09u
+#define REG_DMA_SRC     0x60u
+#define REG_DMA_DST     0x64u
+#define REG_DMA_CNT     0x68u
+#define REG_DMA_CMD     0x6cu
+#define REG_DMA_FILL    0x6eu
+#define CTRL_SPRITES_ON  0x1fu
+#define CTRL_SPRITES_OFF 0x1bu
+
+static void poll_uart(void);
+
+/* Vblank drives NMI, raster and DMA completion drive IRQ into the RISC-V
+ * machine-external interrupt. Only raster and DMA completion reach this
+ * handler; the vblank/NMI cause is acknowledged by the frame loop instead. */
+__attribute__((aligned(4), interrupt("machine"))) static void trap_handler(void) {
+    uint8_t pending = vsn[REG_PENDING];
+    if (pending & 0x02) {                         /* raster compare reached SPLIT_LINE */
+        vsn_write(0x14, OVERVIEW_X, 2);
+        vsn_write(0x16, OVERVIEW_Y, 2);
+        vsn[4] = CTRL_SPRITES_OFF;                /* clean overview: no sprites */
+    }
+    if (pending & 0x04) dma_done = 1;             /* DMA transfer completed */
+    vsn[REG_PENDING] = pending;                   /* W1C: acknowledge observed causes */
+}
+static void enable_interrupts(void) {
+    /* Direct-mode mtvec, then enable machine external interrupts. */
+    __asm__ volatile("csrw mtvec, %0" : : "r"((uint32_t)(uintptr_t)trap_handler));
+    __asm__ volatile("csrs mie, %0" : : "r"(1u << 11));     /* MEIE */
+    __asm__ volatile("csrs mstatus, %0" : : "r"(1u << 3));  /* MIE */
+}
+static void update_irq_enable(void) {
+    uint8_t enable = 0x04;                          /* DMA complete -> IRQ */
+    if (split_enabled) enable |= 0x02;              /* raster -> IRQ */
+    enable |= 0x01;                                 /* vblank -> NMI */
+    vsn[REG_ENABLE] = enable;
+}
+static void configure_split(void) {
+    if (split_enabled) vsn_write(0x50, SPLIT_LINE, 2);
+    else vsn_write(0x50, 0xffff, 2);                /* out of range: never fires */
+    vsn[REG_PENDING] = 0x02;                        /* clear any stale raster cause */
+    update_irq_enable();
+}
+static void dma_copy(uint32_t src, uint32_t dst, uint32_t count) {
+    dma_done = 0;
+    vsn_write(REG_DMA_SRC, src, 4);
+    vsn_write(REG_DMA_DST, dst, 4);
+    vsn_write(REG_DMA_CNT, count, 4);
+    vsn[REG_DMA_CMD] = 0x01;                        /* start, copy */
+}
+static void dma_fill(uint32_t dst, uint32_t count, uint8_t value) {
+    dma_done = 0;
+    vsn_write(REG_DMA_DST, dst, 4);
+    vsn_write(REG_DMA_CNT, count, 4);
+    vsn[REG_DMA_FILL] = value;
+    vsn[REG_DMA_CMD] = 0x03;                        /* start, fill */
+}
+static void await_dma(void) {
+    while (!dma_done) poll_uart();                  /* completion comes via IRQ */
+    dma_done = 0;
+}
+
 static void encode_tile(volatile uint8_t *destination, const char rows[8][9],
                         unsigned transparent) {
     for (unsigned y = 0; y < 8; ++y) {
@@ -306,10 +379,11 @@ static void build_world(void) {
     sign(12, 35, "LAKE"); sign(44, 35, "RUINS");
     world_tile(31, 29, STAR); world_tile(32, 29, STAR);
     world_tile(31, 30, STAR); world_tile(32, 30, STAR);
-    for (unsigned i = 0; i < 256; ++i) {
-        ((volatile uint8_t *)OAM_BASE)[i] = 255;
-        ((volatile uint8_t *)OAM_BACK_BASE)[i] = 255;
-    }
+    /* VSN DMA fill clears the two NES OAM tables; a 255 Y byte hides a sprite. */
+    dma_fill(OAM_BASE, 256, 0xff);
+    await_dma();
+    dma_fill(OAM_BACK_BASE, 256, 0xff);
+    await_dma();
     build_planar_map();
     build_planar_sprites();
     build_rgb444();
@@ -574,7 +648,15 @@ static void poll_uart(void) {
             mode = mode == 0 ? 2 : mode == 2 ? 3 : mode == 3 ? 4 : mode == 4 ? 5 : 0;
             mode_pending = 1;
             break;
-        case '?': uart_text("WASD: pan 8 px | R: center | M: cycle mode | ?: help\r\n"); break;
+        case 'p':
+            split_enabled = !split_enabled;
+            configure_split();
+            uart_text(split_enabled ? "Split: raster-interrupt overview band on\r\n"
+                                    : "Split: off\r\n");
+            break;
+        case '?':
+            uart_text("WASD: pan 8 px | R: center | M: cycle mode | P: raster split | ?: help\r\n");
+            break;
         default: break; /* including CR, LF, spaces and unknown characters */
         }
         /* Mode 5 shows the whole 512x480 world, so the camera is pinned to the
@@ -697,7 +779,12 @@ static void build_scene(int cx, int cy) {
 static void select_pending_oam(void) {
     /* Build the inactive shared OAM table while the previous one is scanned. */
     pending_oam = front_oam == oam_primary() ? oam_secondary() : oam_primary();
-    oam = (volatile uint8_t *)pending_oam;
+    oam = (volatile uint8_t *)OAM_STAGE_BASE; /* build into staging, then DMA */
+}
+/* Blit the just-built sprite records from staging into the inactive OAM table
+ * with VSN's chunked DMA, so the CPU never writes the video-visible table. */
+static void dma_upload(void) {
+    dma_copy(OAM_STAGE_BASE, pending_oam, packed_mode() ? 512u : 256u);
 }
 /* Mode 5 renders the full 512x480 world, so its view origin is always (0,0). */
 static int camera_cx(void) { return mode == 5 ? 0 : (int)(camera_x + 0.5f); }
@@ -709,18 +796,21 @@ static void prepare_scene(void) {
     scroll_x = (unsigned)cx; scroll_y = (unsigned)cy;
     select_pending_oam();
     build_scene(cx, cy);
+    dma_upload();
     ++animation;
 }
 /* Rebuild the inactive table after a live mode change in the vblank window. */
 static void rebuild_scene(void) {
     int cx = camera_cx(), cy = camera_cy();
     pending_oam = oam_primary();
-    oam = (volatile uint8_t *)pending_oam;
+    oam = (volatile uint8_t *)OAM_STAGE_BASE;
     build_scene(cx, cy);
+    dma_upload();
 }
 
 static void publish_scene(void) {
     vsn_write(0x14, scroll_x, 2); vsn_write(0x16, scroll_y, 2);
+    vsn[4] = CTRL_SPRITES_ON; /* top band: player scroll + sprites restored */
     vsn_write(0x30, pending_oam, 4);
     front_oam = pending_oam;
 }
@@ -777,12 +867,15 @@ static void apply_mode(void) {
         vsn[0x18] = 0; vsn[0x38] = 0;
     }
     front_oam = 0; /* The next prepare picks the mode's primary table. */
+    configure_split(); /* RASTER compare follows the split toggle in every mode */
 }
 
 extern uint8_t _data_load[], _data_start[], _data_end[], _bss_start[], _bss_end[];
 __attribute__((noreturn)) void boot(void) {
     for (volatile uint8_t *p = _data_start; p < _data_end; ++p) *p = _data_load[p - _data_start];
     for (volatile uint8_t *p = _bss_start; p < _bss_end; ++p) *p = 0;
+    enable_interrupts();
+    update_irq_enable(); /* DMA-complete and vblank causes; raster follows the split toggle */
     vsn[4] = 0; /* Raster continues while shared assets are constructed. */
     uart_text("\r\nVSN / FOUR CORNERS - RV32IMF\r\n");
     if (vsn[0] != 'V' || vsn[1] != 'S' || vsn[2] != 'N' || vsn[3] != 1) {
@@ -795,19 +888,20 @@ __attribute__((noreturn)) void boot(void) {
     apply_mode(); /* NES mode: four-screen background + 64-entry OAM. */
     vsn[6] = 7;
     prepare_scene();
-    uart_text("WASD: pan 8 px | R: center | M: cycle mode | ?: help\r\n");
+    uart_text("WASD: pan 8 px | R: center | M: cycle mode | P: raster split | ?: help\r\n");
     uart_text("Live input accepts each key immediately; CR/LF ignored.\r\n");
     camera_report();
     /* Start at a blanking boundary. Unlimited per-line sprites is intentional:
      * several independently animated objects can overlap the same scanline. */
     wait_early_vblank();
-    publish_scene();
-    vsn[4] = 0x1f; /* master, BG, sprites, BG-left, sprite-left */
+    await_dma(); /* the first sprite-table upload finished */
+    publish_scene(); /* also re-enables sprites and sets the player scroll */
     /* Show the NES world first, then spend the remaining boot time on the
      * per-cell packed banks. The raster keeps scanning a stable frame. */
     build_packed_assets();
     for (;;) {
         while (vsn[6] & 0x80) poll_uart();
+        vsn[REG_PENDING] = 0x01; /* acknowledge the vblank/NMI cause from last frame */
         prepare_scene();
         wait_early_vblank();
         if (mode_pending) {
@@ -816,6 +910,7 @@ __attribute__((noreturn)) void boot(void) {
             rebuild_scene(); /* emit the new mode's records before publishing */
             uart_text(mode_report());
         }
+        await_dma();           /* the sprite-table upload finished (IRQ-driven) */
         publish_scene(); /* only eight MMIO bytes change in the vblank window */
         if (vsn[6] & 1) {
             vsn[4] = 0;

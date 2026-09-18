@@ -24,6 +24,7 @@ Open the VSN video display and the console for endpoint **`vsn.uart`**. Turn on
 | W / A / S / D | Move the camera up / left / down / right by 8 pixels |
 | R | Return to the central crossroads (128, 120) |
 | M | Cycle NES → planar4 → packed8 → packed16 → hires |
+| P | Toggle the raster-interrupt split: a fixed RUINS overview band |
 | ? | Print the controls |
 
 Uppercase works too. Each character acts immediately; the newline added by
@@ -107,12 +108,13 @@ The optional eight-sprites-per-line limit is disabled so overlapping objects
 remain visible.
 
 Sprite descriptors use two shared-RAM tables per family: the 256-byte NES OAM
-and the 512-byte extended OAM. The CPU prepares the inactive one during visible
-scanout, then publishes its address and the scroll registers in early vblank.
-These are only eight MMIO writes; the renderer never sees a partially
-constructed sprite list. Vblank is polled: neither IRQ nor DMA is required. A
-delayed UART burst can postpone an update to the next early vblank. Inputs
-arriving after preparation appear in the following prepared frame.
+and the 512-byte extended OAM. The CPU builds each frame's records into a
+staging buffer (`0x99000`), then VSN's **chunked DMA copy** uploads them into
+the inactive table during visible scanout. The DMA-complete interrupt signals
+the firmware when the upload lands, so the renderer never sees a partially
+constructed sprite list. A delayed UART burst can postpone an update to the
+next early vblank. Inputs arriving after preparation appear in the following
+prepared frame.
 
 | Address | Contents |
 | --- | --- |
@@ -133,6 +135,8 @@ arriving after preparation appear in the following prepared frame.
 | `0x00018000`–`0x00018aff` | packed sprite tiles and four 16×16 crystals |
 | `0x00020000`–`0x0005bfff` | packed8 per-cell gradient tiles (3840 × 64 bytes) |
 | `0x0005c000`–`0x00097fff` | packed16 per-cell gradient tiles (960 × 256 bytes) |
+| `0x00098000`–`0x000987ff` | hires fine-detail tiles (7 × 256 bytes) |
+| `0x00099000`–`0x000991ff` | sprite staging buffer (DMA upload source) |
 | `0x000a0000`–`0x0010ffff` | Firmware variables, field table and stack |
 | `0x10000000`–`0x1000007f` | VSN native MMIO |
 | `0x10000100`–`0x10000101` | UART data and status |
@@ -143,6 +147,33 @@ through a tile renderer. The display comes up in NES mode about 200 ms after
 reset; the packed banks build for roughly another second while that first frame
 stays on screen. UART's `config.base` intentionally matches its card base; that
 plugin obtains its mapping address from the configuration field.
+
+## Interrupts and DMA (phase 7)
+
+The project enables VSN's two interrupt lines: `nmi_signal` `NMI` and
+`irq_signal` `IRQ`. Vblank drives **NMI**; the RISC-V core has no NMI input, so
+the firmware acknowledges the vblank cause in its frame loop and the NMI line
+pulses once per frame — observable in the signal inspector. Raster compare and
+DMA completion drive **IRQ**, which the RISC-V consumes as its machine-external
+interrupt (`mtvec` + `mie.MEIE` + `mstatus.MIE`).
+
+Pressing **P** arms a raster compare at scanline 184. When the line is reached,
+the IRQ handler switches the scroll to the fixed RUINS corner (`256,240`) and
+hides the sprite layer, so the bottom 56 lines show a clean map overview while
+the top of the frame keeps the live player view; the frame loop restores both
+in vblank. The handler acknowledges each cause with a write-one-to-clear of the
+pending register, so the shared IRQ line deasserts once every cause is served.
+The split works in every mode: the 256×240 modes scroll the bottom band to a
+second quadrant of the world, while hires mode (whose view already spans the
+whole 512×480 world) wraps the background by the same offset so the seam is
+still clearly visible.
+
+The sprite tables are uploaded with VSN **DMA**: the firmware fills each OAM
+buffer at boot with a DMA **fill** (a `0xff` Y byte hides a NES sprite), and
+every frame a DMA **copy** blits the just-built staging buffer into the active
+OAM table, advancing 16 bytes per scanline. The DMA-complete cause drives IRQ,
+and the handler sets a flag the frame loop awaits before publishing the table —
+so the upload is interrupt-driven rather than polled.
 
 ## Rebuild
 

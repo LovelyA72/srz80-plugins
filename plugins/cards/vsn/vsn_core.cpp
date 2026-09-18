@@ -50,11 +50,19 @@ void Core::write(unsigned offset, uint8_t value) {
     if (offset==4) registers_[offset]=value&0x7f;
     else if (offset==5) { if (value<=5) registers_[offset]=value; }
     else if (offset==6) registers_[offset] &= ~(value&7);
+    else if (offset==8) registers_[offset] &= ~(value&0x0f);   // W1C acknowledge
+    else if (offset==9) registers_[offset]=value&0x0f;          // cause enable mask
     else if (offset==0x18) registers_[offset]=value&15;
     else if (offset==0x38) registers_[offset]=value&3;
     else if (offset==0x39) registers_[offset]=value&3;
+    else if (offset==0x6c) { registers_[offset]=value&0x0e; if (value&1) start_dma(); }
+    else if (offset==0x6d) {}                                    // read-only status
+    else if (offset>=0x60 && offset<=0x6b) {                     // live DMA src/dst/count
+        if (!(registers_[0x6d]&1)) registers_[offset]=value;     // ignore while busy
+    }
     else if ((offset>=0x14 && offset<=0x17) || (offset>=0x20 && offset<=0x37) ||
-             (offset>=0x40 && offset<=0x43) || offset==0x45) registers_[offset]=value;
+             (offset>=0x40 && offset<=0x43) || offset==0x45 ||
+             offset==0x50 || offset==0x51 || offset==0x6e) registers_[offset]=value;
 }
 void Core::fault(uint64_t address, bool writing) {
     registers_[6] |= 1;
@@ -72,6 +80,48 @@ uint8_t Core::fetch(uint64_t address) {
 bool Core::store(uint64_t address, uint8_t value) {
     if (address>UINT32_MAX || !memory_.write(address,value)) { fault(address,true); return false; }
     return true;
+}
+uint32_t Core::reg32(unsigned offset) const {
+    return uint32_t(registers_[offset]) | (uint32_t(registers_[offset+1])<<8) |
+           (uint32_t(registers_[offset+2])<<16) | (uint32_t(registers_[offset+3])<<24);
+}
+void Core::set_reg32(unsigned offset, uint32_t value) {
+    for (unsigned i=0; i<4; ++i) registers_[offset+i]=uint8_t(value>>(8*i));
+}
+void Core::start_dma() {
+    if (registers_[0x6d]&1) return;  // ignore a start while a transfer is running
+    registers_[0x6d]=1;              // busy; clears sticky complete and fault
+}
+void Core::dma_fault() {
+    registers_[0x6d]=4;              // fault, not busy
+    registers_[8]|=8;                // pending DMA-fault interrupt
+}
+void Core::dma_chunk() {
+    if (!(registers_[0x6d]&1)) return;
+    const bool fill=(registers_[0x6c]&2)!=0;
+    const bool hold_src=(registers_[0x6c]&4)!=0;
+    const bool hold_dst=(registers_[0x6c]&8)!=0;
+    uint32_t src=reg32(0x60), dst=reg32(0x64), count=reg32(0x68);
+    for (unsigned i=0; i<dma_bytes_per_line && count; ++i) {
+        uint8_t byte=registers_[0x6e];
+        if (!fill) {
+            uint8_t v=0xff;
+            if (!memory_.read(src,v)) {
+                set_reg32(0x60,src); set_reg32(0x64,dst); set_reg32(0x68,count);
+                fault(src,false); dma_fault(); return;
+            }
+            byte=v;
+        }
+        if (!memory_.write(dst,byte)) {
+            set_reg32(0x60,src); set_reg32(0x64,dst); set_reg32(0x68,count);
+            fault(dst,true); dma_fault(); return;
+        }
+        if (!hold_src) ++src;
+        if (!hold_dst) ++dst;
+        --count;
+    }
+    set_reg32(0x60,src); set_reg32(0x64,dst); set_reg32(0x68,count);
+    if (!count) { registers_[0x6d]=2; registers_[8]|=4; }  // complete
 }
 void Core::blank_rows() {
     // One raster line maps to two 512-wide surface rows in every mode.
@@ -142,7 +192,10 @@ void Core::render_line() {
 }
 void Core::tick() {
     if (line_==lines()-1) { vblank_=false; registers_[6] &= ~6; }
-    if (line_==241) vblank_=true;
+    if (line_==241) { vblank_=true; registers_[8]|=1; }         // vblank NMI cause
+    const uint32_t compare=reg32(0x50)&0xffff;
+    if (compare<lines() && line_==compare) registers_[8]|=2;    // raster IRQ cause
+    dma_chunk();                                                 // one chunk per line
     if (line_<height) render_line();
     ++line_;
     if (line_==height) std::swap(front_, back_); // publish the completed frame
@@ -152,7 +205,7 @@ std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;
     out.reserve(164+2*frame_bytes);
     state::append(out,0x314e5356,4); // VSN1
-    state::append(out,3,2);
+    state::append(out,4,2);
     state::append(out,unsigned(region_),1); state::append(out,strict_,1);
     out.insert(out.end(),registers_.begin(),registers_.end());
     state::append(out,line_,2); state::append(out,vblank_,1); state::append(out,fault_write_,1);
@@ -164,13 +217,15 @@ std::vector<uint8_t> Core::save() const {
 bool Core::load(std::span<const uint8_t> data) {
     constexpr size_t header=164;
     if (data.size()!=header+2*frame_bytes || state::get(data,0,4)!=0x314e5356 ||
-        state::get(data,4,2)!=3 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
+        state::get(data,4,2)!=4 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
         state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1) return false;
     // Validate all stored register bytes, including reserved and masked bits,
     // before touching live state. Status is stored separately from live blank.
     Core validator(memory_,region_,strict_);
     for (unsigned i=0; i<128; ++i) validator.write(i,data[8+i]);
-    validator.registers_[6]=data[14]&7;
+    validator.registers_[6]=data[14]&7;             // W1C STATUS causes
+    validator.registers_[8]=data[16]&0x0f;          // W1C interrupt pending
+    validator.registers_[0x6d]=data[8+0x6d]&0x07;   // read-only DMA status
     if (!std::equal(validator.registers_.begin(),validator.registers_.end(),data.begin()+8)) return false;
     // Every shipped output pixel is opaque; the surface has no border since
     // low-res modes are upscaled to fill it exactly.
