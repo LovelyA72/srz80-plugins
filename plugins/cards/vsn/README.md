@@ -1,4 +1,4 @@
-# SR Video Synthesizer (VSN), native contract revision 1
+# SR Visual Synthesizer (VSN), native contract revision 1
 
 VSN consumes graphics in ordinary SRZ80 shared memory. Phases 0–5 implement
 NES graphics data, packed 4bpp, packed 8bpp and 16x16 packed 8bpp backgrounds,
@@ -11,7 +11,7 @@ allocation without advertising them.
 
 ## Installation and configuration
 
-Plugin ID `vsn`, category Video, display name SR Video Synthesizer. Default
+Plugin ID `vsn`, category Video, display name SR Visual Synthesizer. Default
 mapping: `cpu0.io`, base `0x80`, exactly 128 bytes. No rack clock subscription.
 Configuration is a JSON object; unknown keys and wrong types fail creation.
 
@@ -136,8 +136,10 @@ high bits become descriptor bits 0–11.
 
 RGB444 is 256 little-endian 16-bit entries at `PALETTE_BASE+index*2`: bits 0–3
 blue, 4–7 green, 8–11 red; upper bits ignored. Each channel expands by *17.
-Example `0f 0a` is (170,0,255,255). The entire palette is latched once at the
-start of each enabled visible line, including lines with both layers disabled.
+Example `0f 0a` is (170,0,255,255). The entire palette is latched once per
+frame at the first enabled visible line that uses it, including lines with both
+layers disabled, and held until the next frame or until MODE, PALETTE_BASE or
+NES_COLOR changes mid-frame.
 
 RGB555 is the mode 3/4 palette: 256 little-endian 16-bit entries at
 `PALETTE_BASE+index*2` with blue bits 0–4, green 5–9, red 10–14 and bit 15
@@ -175,7 +177,8 @@ hides a sprite (no byte wrap). Attribute bits 0–1 palette, 5 behind background
 NES_PATTERN bit 1 *4096. 8x16 sprites use tile bit 0 for the pattern table and
 `tile&fe` for the first tile; Y flip reverses the entire 16 rows. Example tile 3,
 local row 10 reads offsets 4146 and 4154 from SPRITE_TILE_BASE. The 256 OAM
-bytes are latched at the start of every visible line with sprites enabled.
+bytes are latched once per frame at the first visible line with sprites enabled
+and held until the next frame or until MODE or SPRITE_BASE changes mid-frame.
 
 Sprites are selected in OAM order. Nine or more in-range sprites set overflow;
 strict mode renders only the first eight. Overflow is a simple count, not the
@@ -213,8 +216,9 @@ sprites are 4bpp, and the record palette is a 16-entry bank (`palette*16+pixel`)
 modes 3/4 sprites are 8bpp and the pixel value is the full palette index, so the
 record palette is ignored. Pixel zero is transparent. Extended sprites have no
 sprite-zero hit, no 8-sprite limit, no overflow flag and no left-edge masking;
-those are NES/planar4 rules. The 512 bytes are latched at the start of every
-visible line with sprites enabled.
+those are NES/planar4 rules. The 512 bytes are latched once per frame at the
+first visible line with sprites enabled and held until the next frame or until
+MODE or SPRITE_BASE changes mid-frame.
 
 Future optional 32-bit background tile descriptors allocate tile bits 0–19,
 palette 20–23, flip X 24, flip Y 25, priority 26, reserved 27–31. Later modes
@@ -243,14 +247,18 @@ and reset are opaque black. Enabled lines use the configured palette backdrop.
 The implemented modes publish a 256x240 RGBA8 surface, matching the complete
 active viewport. A future high-resolution mode must publish its actual geometry
 when that mode is implemented rather than padding the current surface with an
-unused black border. Video and timing queries only copy stored data. They do not
-fetch, render, advance counters or clear flags. Reset (warm or cold) resets
-registers, counters, faults, framebuffer and scheduling remainder, preserving
-shared RAM. Destroy cancels the event and unmaps MMIO; video providers use host
-owner teardown.
+unused black border. The surface is double-buffered: the raster renders into a
+back buffer and publishes a whole completed frame into the front buffer at the
+end of the visible area (the post-render line), so a video query always copies
+one complete frame rather than a mid-render image. Video and timing queries only
+copy stored data. They do not fetch, render, advance counters or clear flags.
+Reset (warm or cold) resets registers, counters, faults, both framebuffers and
+scheduling remainder, preserving shared RAM. Destroy cancels the event and
+unmaps MMIO; video providers use host owner teardown.
 
-The standalone core has validated fixed-endian snapshots (`VSN1`, version 1)
-for register/raster/fault/framebuffer testing. Card ABI save/load is deliberately
+The standalone core has validated fixed-endian snapshots (`VSN1`, version 2;
+version 2 adds the second framebuffer) for register/raster/fault/framebuffer
+testing. Card ABI save/load is deliberately
 unavailable until phase 8: the current host API supplies no simulated scheduler
 clock or post-restore hook, and `host.time_ns` may be fixed or wall-clock time.
 An exact remaining-event deadline cannot be restored portably through that API.
@@ -276,8 +284,10 @@ without changing scheduling or compositing. A future 3D backend can keep scene,
 depth and full-frame buffers internally, prepare a frame at its first scanline,
 and copy its output through the same scanline interface. It does not need any
 SRZ80 code. Backend selection/register extensions and serialization of persistent
-backend data must accompany that feature. The current backend is stateless
-between scanlines, so core snapshots need no backend payload.
+backend data must accompany that feature. The current backend caches only the
+frame-latched palette and sprite table between scanlines; those caches are
+invalidated by `reset()`, so core snapshots need no backend payload and a load
+re-latches from shared memory at the next frame.
 
 ## Build
 

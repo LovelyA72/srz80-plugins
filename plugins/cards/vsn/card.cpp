@@ -244,7 +244,7 @@ uint32_t SRH_CALL property_count(void *) { return Card::property_count; }
 SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *out) { return Card::property_info(index,out); }
 SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) { return static_cast<Card*>(context)->property_get(index,out); }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
-const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),"Video","SR Video Synthesizer",
+const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),"Video","SR Visual Synthesizer",
     "Native shared-memory tile and NES graphics renderer",0x80,128,0,0,0,SRH_CARD_REQUIRES_IO_SPACE,
     R"({"io_space":"cpu0.io","memory_space":"cpu0.mem","region":"NTSC","nmi_signal":"NMI","irq_signal":"IRQ","strict_memory":false})",
     "io_space",nullptr,nullptr,0};

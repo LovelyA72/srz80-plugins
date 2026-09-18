@@ -8,7 +8,7 @@
 namespace vsn {
 Core::Core(Memory &memory, Region region, bool strict, std::unique_ptr<Renderer> renderer)
     : memory_(memory), region_(region), strict_(strict), renderer_(std::move(renderer)),
-      framebuffer_(frame_bytes) {
+      front_(frame_bytes), back_(frame_bytes) {
     if (!renderer_) throw std::invalid_argument("VSN requires a renderer");
     reset();
 }
@@ -20,8 +20,11 @@ void Core::reset() {
     registers_[0x2d]=4; registers_[0x2f]=8;
     line_=lines()-1; frame_=faults_=fault_address_=0;
     vblank_=fault_write_=rendering_=false;
-    std::fill(framebuffer_.begin(),framebuffer_.end(),0);
-    for (size_t i=3; i<framebuffer_.size(); i+=4) framebuffer_[i]=255;
+    const auto clear=[](std::vector<uint8_t> &buffer) {
+        std::fill(buffer.begin(),buffer.end(),0);
+        for (size_t i=3; i<buffer.size(); i+=4) buffer[i]=255;
+    };
+    clear(front_); clear(back_);
     renderer_->reset();
 }
 uint32_t Core::value(unsigned offset, unsigned bytes) const {
@@ -75,8 +78,8 @@ void Core::blank_line() {
     const size_t begin=size_t(line_)*surface_width*4;
     for (size_t x=0; x<width; ++x) {
         const size_t p=begin+x*4;
-        framebuffer_[p]=framebuffer_[p+1]=framebuffer_[p+2]=0;
-        framebuffer_[p+3]=255;
+        back_[p]=back_[p+1]=back_[p+2]=0;
+        back_[p+3]=255;
     }
 }
 void Core::render_line() {
@@ -96,7 +99,7 @@ void Core::render_line() {
     rendering_=true;
     try {
         const auto effects=renderer_->render_scanline(line,gateway,
-            std::span(framebuffer_).subspan(size_t(line_)*surface_width*4,width*4));
+            std::span(back_).subspan(size_t(line_)*surface_width*4,width*4));
         if (effects.sprite_zero) registers_[6] |= 2;
         if (effects.sprite_overflow) registers_[6] |= 4;
     } catch (const AbortLine &) {
@@ -111,24 +114,27 @@ void Core::tick() {
     if (line_==lines()-1) { vblank_=false; registers_[6] &= ~6; }
     if (line_==241) vblank_=true;
     if (line_<height) render_line();
-    if (++line_==lines()) { line_=0; ++frame_; renderer_->begin_frame(frame_); }
+    ++line_;
+    if (line_==height) std::swap(front_, back_); // publish the completed frame
+    if (line_==lines()) { line_=0; ++frame_; renderer_->begin_frame(frame_); }
 }
 std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;
-    out.reserve(168+frame_bytes);
+    out.reserve(164+2*frame_bytes);
     state::append(out,0x314e5356,4); // VSN1
-    state::append(out,1,2);
+    state::append(out,2,2);
     state::append(out,unsigned(region_),1); state::append(out,strict_,1);
     out.insert(out.end(),registers_.begin(),registers_.end());
     state::append(out,line_,2); state::append(out,vblank_,1); state::append(out,fault_write_,1);
     state::append(out,frame_,8); state::append(out,faults_,8); state::append(out,fault_address_,8);
-    out.insert(out.end(),framebuffer_.begin(),framebuffer_.end());
+    out.insert(out.end(),front_.begin(),front_.end());
+    out.insert(out.end(),back_.begin(),back_.end());
     return out;
 }
 bool Core::load(std::span<const uint8_t> data) {
     constexpr size_t header=164;
-    if (data.size()!=header+frame_bytes || state::get(data,0,4)!=0x314e5356 ||
-        state::get(data,4,2)!=1 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
+    if (data.size()!=header+2*frame_bytes || state::get(data,0,4)!=0x314e5356 ||
+        state::get(data,4,2)!=2 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
         state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1) return false;
     // Validate all stored register bytes, including reserved and masked bits,
     // before touching live state. Status is stored separately from live blank.
@@ -137,17 +143,22 @@ bool Core::load(std::span<const uint8_t> data) {
     validator.registers_[6]=data[14]&7;
     if (!std::equal(validator.registers_.begin(),validator.registers_.end(),data.begin()+8)) return false;
     // Every shipped output pixel is opaque; reject corrupt alpha/border data.
-    for (size_t i=0; i<frame_bytes; i+=4) {
-        if (data[header+i+3]!=255) return false;
-        const size_t pixel=i/4;
-        if ((pixel%surface_width>=width || pixel/surface_width>=height) &&
-            (data[header+i] || data[header+i+1] || data[header+i+2])) return false;
-    }
+    const auto valid_frame=[&](size_t off) {
+        for (size_t i=0; i<frame_bytes; i+=4) {
+            if (data[off+i+3]!=255) return false;
+            const size_t pixel=i/4;
+            if ((pixel%surface_width>=width || pixel/surface_width>=height) &&
+                (data[off+i] || data[off+i+1] || data[off+i+2])) return false;
+        }
+        return true;
+    };
+    if (!valid_frame(header) || !valid_frame(header+frame_bytes)) return false;
     registers_=validator.registers_;
     line_=uint32_t(state::get(data,136,2)); vblank_=data[138]; fault_write_=data[139];
     frame_=state::get(data,140,8); faults_=state::get(data,148,8); fault_address_=state::get(data,156,8);
-    std::copy(data.begin()+header,data.end(),framebuffer_.begin());
-    renderer_->reset(); // Current tile backend has only line-local state.
+    std::copy(data.begin()+header,data.begin()+header+frame_bytes,front_.begin());
+    std::copy(data.begin()+header+frame_bytes,data.end(),back_.begin());
+    renderer_->reset(); // Clears the frame-latched palette/OAM caches.
     return true;
 }
 } // namespace vsn

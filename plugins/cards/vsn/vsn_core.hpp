@@ -45,7 +45,7 @@ public:
     uint8_t read(unsigned offset) const;
     void write(unsigned offset, uint8_t value);
     void tick();
-    std::span<const uint8_t> pixels() const { return framebuffer_; }
+    std::span<const uint8_t> pixels() const { return front_; }
     uint32_t line() const { return line_; }
     uint32_t lines() const { return profile(region_).lines; }
     uint64_t frame() const { return frame_; }
@@ -72,7 +72,10 @@ private:
     bool strict_;
     std::array<uint8_t,128> registers_{};
     std::unique_ptr<Renderer> renderer_;
-    std::vector<uint8_t> framebuffer_;
+    // Double-buffered scanout: the raster renders into back_ and publishes the
+    // completed frame into front_ at the end of the visible area, so a video
+    // query always copies one complete frame instead of a mid-render image.
+    std::vector<uint8_t> front_, back_;
     uint32_t line_=0;
     uint64_t frame_=0, faults_=0, fault_address_=0;
     bool vblank_=false, fault_write_=false, rendering_=false;
