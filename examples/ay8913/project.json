@@ -1,0 +1,95 @@
+{
+  "cards": [
+    {
+      "base": "0x4000",
+      "name": "Work RAM",
+      "plugin": "ram",
+      "size": "0x4000",
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "image": "player.rom",
+      "name": "Player firmware",
+      "plugin": "rom",
+      "priority": 10,
+      "size": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": 2097152,
+      "clock": 0,
+      "image": "example.ym",
+      "name": "uncompressed ym file",
+      "plugin": "rom",
+      "priority": 10,
+      "reset_vector": 0,
+      "size": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "clock": 0,
+      "plugin": "riscv",
+      "reset_vector": 0,
+      "size": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000000",
+      "config": {
+        "chip_clock_hz": 2000000,
+        "sample_rate": 44100,
+        "stream_name": "AY-3-8913 .ym player"
+      },
+      "plugin": "ay8913",
+      "size": 2,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10001000",
+      "clock": 2,
+      "config": {
+        "intack_enable": true,
+        "intack_port": 32768,
+        "irq": "IRQ"
+      },
+      "plugin": "ctc",
+      "size": 4,
+      "space": "rv.memory"
+    }
+  ],
+  "clocks": [
+    1000000,
+    0,
+    3072000
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "RV32IMF parses a standard uncompressed .ym register dump from ROM1 and plays it through the AY-3-8913. A Z80 CTC raises the 60 Hz machine external interrupt that advances one frame.",
+    "title": "AY-3-8913 .ym music player"
+  },
+  "name": "ay8913-music",
+  "rack_info": {
+    "author": "",
+    "notes": "RISC-V based ym keygen music player for SRZ80",
+    "thumbnail": "",
+    "version": ""
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFFFF",
+      "name": "rv.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
