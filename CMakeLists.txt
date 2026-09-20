@@ -90,8 +90,8 @@ if(SRZ80_BUILD_TOOLS)
   set(SDL_TESTS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(SDL3)
   FetchContent_Declare(imgui
-    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5-docking.tar.gz
-    URL_HASH SHA256=c816c20e8c75f3e15ae867350e79925502d1a6a85938bb1a73b8927e5f31f9cb
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz
+    URL_HASH SHA256=90ded916bd57db2e0e171b6b098940a47c6f5042725dcdc67fb19940ca8bfdcc
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(imgui)
   add_library(srz80_imgui STATIC

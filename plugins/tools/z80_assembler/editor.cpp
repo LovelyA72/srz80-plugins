@@ -1,7 +1,15 @@
 #include "editor.hpp"
 #include <algorithm>
+#include <climits>
 #include <cstring>
 namespace srz80::assembler {
+void Editor::open(const std::string &text, uint64_t cursor_offset) {
+    ++document_id;
+    previous_text=text;
+    cursor=static_cast<int>(std::min<uint64_t>(cursor_offset,static_cast<uint64_t>(INT_MAX)));
+    jump=cursor;
+    selection_end=cursor;
+}
 void Editor::go_to(const std::string &text, size_t line, size_t column) {
     size_t offset=0;
     for (size_t n=1;n<line && offset<text.size();++n) {
@@ -33,11 +41,12 @@ int Editor::callback(ImGuiInputTextCallbackData *data) {
 bool Editor::draw(SourceModel &source, ImVec2 size) {
     editing=&source.text;
     if(jump>=0) ImGui::SetKeyboardFocusHere();
+    ImGui::PushID(static_cast<int>(document_id));
     bool changed=ImGui::InputTextMultiline("##source",source.text.data(),source.text.capacity()+1,size,
         ImGuiInputTextFlags_CallbackResize|ImGuiInputTextFlags_CallbackAlways|
-            ImGuiInputTextFlags_CallbackEdit|ImGuiInputTextFlags_AllowTabInput|
-            ImGuiInputTextFlags_NoUndoRedo,
+            ImGuiInputTextFlags_CallbackEdit|ImGuiInputTextFlags_AllowTabInput,
         callback,this);
+    ImGui::PopID();
     if(changed) { source.text.resize(std::strlen(source.text.c_str())); source.changed(); }
     editing=nullptr;
     return changed;

@@ -454,16 +454,6 @@ struct Tool {
         ImGui::End(); *open=visible;
     }
 };
-SrhStatus SRH_CALL open_project_file(void *context,const char *path,const char *text,uint64_t size,uint64_t cursor) {
-    return srz80::sdk::guard([&]() -> SrhStatus {
-        (void)text; (void)size; (void)cursor;
-        if(!context || !path || !*path) return SRH_INVALID;
-        // Standard MIDI Files are binary; the host supplies the path only and
-        // this tool owns reading and interpreting the bytes.
-        static_cast<Tool *>(context)->load_file(path);
-        return SRH_OK;
-    });
-}
 SrhStatus SRH_CALL create(const SrhToolHostV1 *host,void **out) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if(!srz80::sdk::valid(host) || !out || !host->input_submit || !host->input_cancel || !host->runtime_info) return SRH_INVALID;
@@ -473,18 +463,11 @@ SrhStatus SRH_CALL create(const SrhToolHostV1 *host,void **out) {
         std::array<char,1024> text{};
         if(host->config_get(host->context,"midi.input_port",text.data(),text.size())==SRH_OK) tool->input_port=text.data();
         if(host->config_get(host->context,"midi.output_port",text.data(),text.size())==SRH_OK) tool->output_port=text.data();
-        if(srz80::sdk::has_field(host,&SrhToolHostV1::file_handler_register) && host->file_handler_register)
-            for(const char *extension:{"mid","smf"}) {
-                SrhToolFileHandler handler{SRH_INIT(SrhToolFileHandler),"midi",extension,"MIDI file player",tool.get(),open_project_file,SRH_FILE_HANDLER_BINARY};
-                if(host->file_handler_register(host->context,&handler)!=SRH_OK) { tool.reset(); return SRH_ERROR; }
-            }
         *out=tool.release(); return SRH_OK;
     });
 }
 void SRH_CALL destroy(void *p) {
     auto tool=std::unique_ptr<Tool>(static_cast<Tool *>(p));
-    if(tool && srz80::sdk::has_field(tool->host,&SrhToolHostV1::file_handler_unregister) && tool->host->file_handler_unregister)
-        tool->host->file_handler_unregister(tool->host->context,tool.get());
     tool->stop_playback(); tool->release_keys();
     while(!tool->live_queue.empty()) { tool->submit(tool->live,tool->live_queue.front(),UINT64_MAX); tool->live_queue.pop_front(); }
     for(auto client:{&tool->live,&tool->playback}) for(auto request:client->requests)

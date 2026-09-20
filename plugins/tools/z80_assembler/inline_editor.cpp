@@ -137,6 +137,7 @@ void InlineEditor::edit(SourceModel &s) {
     if(editing)return;
     auto rows=LineDocument::lines(s.text);selected=std::min(selected,rows.size()-1);
     buffer=rows[selected];document.begin(s);editing=true;focus=true;scroll=true;
+    active_cursor_column=cursor_column>=0?cursor_column:static_cast<int>(buffer.size());
 }
 void InlineEditor::finish(SourceModel &s,bool cancel) {
     if(!editing)return;
@@ -166,6 +167,7 @@ int InlineEditor::callback(ImGuiInputTextCallbackData *data) {
         data->SelectionStart=data->SelectionEnd=data->CursorPos;e.cursor_column=-1;
     }
     format_text_edit(data,false);
+    e.active_cursor_column=data->CursorPos;
     return 0;
 }
 bool InlineEditor::draw(SourceModel &s,ImVec2 size,const SyntaxPalette *palette) {
@@ -257,7 +259,8 @@ bool InlineEditor::draw(SourceModel &s,ImVec2 size,const SyntaxPalette *palette)
                     callback,this);
                 buffer.resize(std::strlen(buffer.c_str()));
                 if(buffer!=before)document.replace(s,row,buffer);
-                if(buffer.empty() && ImGui::IsKeyPressed(ImGuiKey_Backspace)) {finish(s);erase(s);}
+                if(ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) finish(s);
+                else if(before.empty() && buffer.empty() && ImGui::IsKeyPressed(ImGuiKey_Backspace,false)) {finish(s);erase(s);}
                 else if(ImGui::IsKeyPressed(ImGuiKey_Escape))finish(s,true);
                 else if(accepted) insert(s,true);
             } else {

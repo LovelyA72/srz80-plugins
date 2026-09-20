@@ -27,13 +27,14 @@ struct InlineEditor {
     bool editing=false,focus=false,scroll=false;
     std::string buffer;
     int cursor_column=-1;
+    int active_cursor_column=0;
     void navigate(SourceModel &source,size_t line,size_t column=1);
     void edit(SourceModel &source);
     void finish(SourceModel &source,bool cancel=false);
     void insert(SourceModel &source,bool after=false);
     void erase(SourceModel &source);
     bool draw(SourceModel &source,ImVec2 size,const SyntaxPalette *palette=nullptr);
-    void reset() {document.clear();selected=0;editing=false;scroll=true;}
+    void reset() {document.clear();selected=0;editing=false;scroll=true;active_cursor_column=0;}
     static int callback(ImGuiInputTextCallbackData *data);
 };
 }
