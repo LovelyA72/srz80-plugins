@@ -255,11 +255,19 @@ typedef struct SrhHostAudioV1 {
 } SrhHostAudioV1;
 
 /* Optional query: "host.audio_input.v1". Existing ABI tables are unchanged.
-   Simulation-thread only. request(owner, rate) starts a subscription at
-   8000..384000 Hz; request(owner, 0) stops it. read() is nonblocking, returns
-   frames of interleaved float PCM, and takes capacity in float sample slots.
-   The host performs nearest-exact rate conversion; clients must use the
-   returned rate and channel count on every call. */
+   Simulation-thread only. request(owner, rate) starts a subscription at 8000..384000 Hz; request(owner,
+   0) stops and discards it. The owner must be alive; removal stops capture.
+   Repeating a request with the same rate preserves data; a new rate clears it.
+   Resampling is strictly nearest-exact: source frame floor((n + 0.5) *
+   source_rate / requested_rate), continuous across blocks, without filtering.
+   SDL preserves native device rate; its conversion is only format/channels.
+   read is nonblocking, returns interleaved float PCM in [-1, 1], and writes the
+   current rate/channels even when no frames are available. capacity is in FLOAT
+   SAMPLES, not frames; return count is FRAMES. Always use the returned format:
+   user device/channel/rate changes discard queued data. Each owner has its own
+   bounded queue (oldest frames drop on overflow). Disabled/unavailable input
+   returns zero frames. Capture follows wall time, not emulated time; it is not
+   saved in snapshots. Check query for NULL on older hosts. */
 typedef struct SrhHostAudioInputV1 {
     SRH_HEADER;
     void *context;

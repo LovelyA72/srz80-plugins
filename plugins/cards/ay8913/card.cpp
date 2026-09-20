@@ -408,7 +408,7 @@ SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t siz
 const SrhCardDescriptor descriptor{
     SRH_INIT(SrhCardDescriptor), "Audio", "AY-3-8913",
     "General Instrument AY-3-8913 programmable sound generator", 0xA0, 2, 0, 0, 0,
-    SRH_CARD_REQUIRES_IO_SPACE,
+    0, // port block maps into the selected space; no separate I/O space
     R"({"chip_clock_hz":1789773,"sample_rate":44100,"stream_name":"AY-3-8913","data_first":false})",
     nullptr, nullptr, nullptr, 0};
 

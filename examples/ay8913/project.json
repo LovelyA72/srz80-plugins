@@ -36,13 +36,16 @@
       "space": "rv.memory"
     },
     {
-      "base": "0x10000000",
+      "base": 268435456,
+      "clock": 0,
       "config": {
         "chip_clock_hz": 2000000,
         "sample_rate": 44100,
-        "stream_name": "AY-3-8913 .ym player"
+        "stream_name": "AY8913"
       },
       "plugin": "ay8913",
+      "priority": 0,
+      "reset_vector": 0,
       "size": 2,
       "space": "rv.memory"
     },
