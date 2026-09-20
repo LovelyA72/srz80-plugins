@@ -55,6 +55,7 @@ public:
 
     // Mono mix of the three channels as a float in a small bipolar range
     // (MAME legacy-normalized per-channel tables, summed).
+    float channel_sample(unsigned channel) const;
     float sample() const;
 
     void save_state(uint8_t *dst) const;

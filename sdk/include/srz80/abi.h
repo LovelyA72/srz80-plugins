@@ -102,7 +102,7 @@ typedef struct SrhProperty {
     SRH_HEADER;
     const char *name;
     const char *group;
-    const char *description;
+    const char *description; /* optional tooltip; may be NULL or empty */
     uint32_t kind, bits, base, editable;
     const char *enum_labels; /* labels separated by |, indexed from zero */
     /* UI hints (appended in SRH_ABI 1, guarded by struct_size). */

@@ -212,18 +212,20 @@ void core::step() {
     envelope_.volume = static_cast<uint8_t>(envelope_.step ^ envelope_.attack);
 }
 
+float core::channel_sample(unsigned channel) const {
+    const tone_t &tone = tones_[channel];
+    const bool enabled = channel_enabled(channel);
+    // MAME indexes table[0] when the mix is 0 (the DC-offset "off" level),
+    // rather than emitting a literal zero.
+    if (bit(tone.volume, 4))
+        return enabled ? env_table_[envelope_.volume & 0x0f] : env_table_[0];
+    return enabled ? vol_table_[tone.volume & 0x0f] : vol_table_[0];
+}
+
 float core::sample() const {
     float mix = 0.0f;
-    for (unsigned ch = 0; ch < kChannels; ++ch) {
-        const tone_t &t = tones_[ch];
-        const bool enabled = channel_enabled(ch);
-        // MAME indexes table[0] when the mix is 0 (the DC-offset "off" level),
-        // rather than emitting a literal zero.
-        if (bit(t.volume, 4))
-            mix += enabled ? env_table_[envelope_.volume & 0x0f] : env_table_[0];
-        else
-            mix += enabled ? vol_table_[t.volume & 0x0f] : vol_table_[0];
-    }
+    for (unsigned channel = 0; channel < kChannels; ++channel)
+        mix += channel_sample(channel);
     return mix;
 }
 

@@ -22,6 +22,9 @@ GPIO ports (registers `$0E`/`$0F` are stored but inert).
 - **Clock:** `chip_clock_hz`, internally divided by 8. Default `1789773`
   (1.7897725 MHz).
 - **Audio:** mono source duplicated to stereo, `sample_rate` default `44100`.
+- **Channel mute:** the Device Inspector exposes a live `Mute` control for each
+  channel. Muting is applied only while mixing audio; it does not change the
+  PSG register file and remains effective while the simulation is running.
 
 ## Config keys
 

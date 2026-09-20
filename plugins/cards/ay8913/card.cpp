@@ -4,6 +4,7 @@
 #include "ay8913.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -96,6 +97,7 @@ struct Card {
     uint32_t sample_rate = kDefaultSampleRate;
     bool data_first = false;
     uint64_t clock_accum = 0;
+    std::atomic<uint8_t> mute_mask{0};
     ay8913::core core;
 
     uint64_t latch_address() const { return base + (data_first ? 1u : 0u); }
@@ -142,7 +144,13 @@ SrhStatus SRH_CALL render(void *context, uint64_t, uint32_t frames, int16_t *int
             card.clock_accum -= denominator;
             card.core.step();
         }
-        const float mix = card.core.sample() * kOutputGain;
+        const uint8_t mute_mask = card.mute_mask.load(std::memory_order_relaxed);
+        float mix = 0.0f;
+        for (unsigned channel = 0; channel < ay8913::core::kChannels; ++channel) {
+            if ((mute_mask & (1u << channel)) == 0)
+                mix += card.core.channel_sample(channel);
+        }
+        mix *= kOutputGain;
         const auto clamped = static_cast<int16_t>(std::clamp(
             mix, static_cast<float>(std::numeric_limits<int16_t>::min()),
             static_cast<float>(std::numeric_limits<int16_t>::max())));
@@ -219,7 +227,7 @@ constexpr uint32_t kInterfaceStart = kRawStart + kRawCount;
 constexpr uint32_t kInterfaceCount = 2; // Address, Data
 constexpr uint32_t kChanStart = kInterfaceStart + kInterfaceCount;
 constexpr uint32_t kChanCount = 3;
-constexpr uint32_t kChanFieldCount = 3; // Period, Tone, Mix
+constexpr uint32_t kChanFieldCount = 4; // Period, Tone, Mix, Mute
 constexpr uint32_t kGlobalStart = kChanStart + kChanCount * kChanFieldCount;
 constexpr uint32_t kGlobalCount = 3; // Envelope, Noise, RNG
 constexpr uint32_t kPropertyCount = kGlobalStart + kGlobalCount;
@@ -233,9 +241,9 @@ SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *out) {
     static const char *config_descriptions[] = {
         "First mapped I/O port", "AY-3-8913 input clock", "Native output rate",
         "Data port first (true) or address port first (false)"};
-    static const char *chan_fields[] = {"Period", "Tone", "Mix"};
+    static const char *chan_fields[] = {"Period", "Tone", "Mix", "Mute"};
     static const char *chan_descriptions[] = {
-        "Tone period (coarse<<8 | fine)", "Tone generator output", "Channel mix enable"};
+        "Tone period (coarse<<8 | fine)", "Tone generator output", "Channel mix enable", ""};
     static const char *global_names[] = {"Envelope", "Noise", "RNG"};
     static const char *global_descriptions[] = {
         "Envelope generator volume", "Noise generator output", "Noise LFSR state"};
@@ -291,7 +299,12 @@ SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *out) {
             kind = SRH_BOOLEAN;
             bits = 1;
         }
-        ui_flags = SRH_PROPERTY_HIDE_UI;
+        if (field == 3) {
+            editable = 1;
+            ui_flags = SRH_PROPERTY_LIVE_EDIT | SRH_PROPERTY_RUNTIME;
+        } else {
+            ui_flags = SRH_PROPERTY_HIDE_UI;
+        }
     } else {
         const uint32_t g = index - kGlobalStart;
         std::snprintf(name, sizeof(name), "%s", global_names[g]);
@@ -336,9 +349,10 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) {
     if (index < kGlobalStart) {
         const uint32_t chan = (index - kChanStart) / kChanFieldCount;
         const uint32_t field = (index - kChanStart) % kChanFieldCount;
-        out->unsigned_value = field == 0 ? card.core.tone_period(chan)
+        out->unsigned_value = field == 0   ? card.core.tone_period(chan)
                               : field == 1 ? (card.core.tone_output(chan) ? 1u : 0u)
-                                           : (card.core.channel_enabled(chan) ? 1u : 0u);
+                              : field == 2 ? (card.core.channel_enabled(chan) ? 1u : 0u)
+                                           : ((card.mute_mask.load(std::memory_order_relaxed) >> chan) & 1u);
         return SRH_OK;
     }
     const uint32_t g = index - kGlobalStart;
@@ -370,6 +384,18 @@ SrhStatus SRH_CALL property_set(void *context, uint32_t index, const SrhValue *i
                 return SRH_INVALID;
             card.core.set_register(card.core.latch(), static_cast<uint8_t>(in->unsigned_value));
         }
+        return SRH_OK;
+    }
+    if (index < kGlobalStart) {
+        const uint32_t channel = (index - kChanStart) / kChanFieldCount;
+        const uint32_t field = (index - kChanStart) % kChanFieldCount;
+        if (field != 3 || in->unsigned_value > 1)
+            return SRH_INVALID;
+        const uint8_t bit = static_cast<uint8_t>(1u << channel);
+        if (in->unsigned_value != 0)
+            card.mute_mask.fetch_or(bit, std::memory_order_relaxed);
+        else
+            card.mute_mask.fetch_and(static_cast<uint8_t>(~bit), std::memory_order_relaxed);
         return SRH_OK;
     }
     return SRH_INVALID; // observables are read-only
