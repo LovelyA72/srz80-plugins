@@ -385,8 +385,6 @@ VoiceInspection Engine::inspect_voice(uint32_t voice) const {
 std::vector<uint8_t> Engine::save_state() const {
     std::vector<uint8_t> out;
     out.reserve(8 + voices_.size() * 80);
-    append(out, uint32_t{0x31574d59});
-    append(out, uint32_t{3});
     for (const auto &v : voices_) {
         out.insert(out.end(), v.regs.begin(), v.regs.end());
         for (auto value : {v.start, v.loop, v.length}) append(out, value);
@@ -404,8 +402,6 @@ std::vector<uint8_t> Engine::save_state() const {
 }
 
 bool Engine::load_state(std::span<const uint8_t> state) {
-    uint32_t magic = 0, version = 0;
-    if (!take(state, magic) || !take(state, version) || magic != 0x31574d59 || version != 3) return false;
     auto restored = voices_;
     for (auto &v : restored) {
         if (state.size() < v.regs.size()) return false;
@@ -420,7 +416,7 @@ bool Engine::load_state(std::span<const uint8_t> state) {
             !take(state, v.rate_correction) || !take(state, v.release) || !take(state, v.target_level) ||
             !take(state, v.envelope)) return false;
         uint8_t playing = 0;
-        if (!take(state, playing) || v.start >= address_space_size || !v.length || v.loop >= v.length ||
+        if (!take(state, playing) || playing > 1 || v.start >= address_space_size || !v.length || v.loop >= v.length ||
             v.phase >= (static_cast<uint64_t>(v.length) << 16) || v.format > 1 || v.target_level > 127 ||
             v.total_level > (127u << 16) || v.envelope_volume > (0x3ffu << 16) ||
             static_cast<uint8_t>(v.envelope) > static_cast<uint8_t>(EnvelopeStage::release)) return false;

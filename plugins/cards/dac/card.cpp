@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <array>
@@ -216,17 +217,17 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) {
 }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 
-constexpr uint64_t kStateSize = 4 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 8 + 1 + 1 + 1 + kFifoCapacity;
+constexpr uint64_t kStateSize = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 8 + 1 + 1 + 1 + kFifoCapacity;
 void put_u32(uint8_t *&p, uint32_t value) { for (unsigned i = 0; i < 4; ++i) *p++ = uint8_t(value >> (8 * i)); }
 uint32_t take_u32(const uint8_t *&p) { uint32_t value = 0; for (unsigned i = 0; i < 4; ++i) value |= uint32_t(*p++) << (8 * i); return value; }
 void put_u64(uint8_t *&p, uint64_t value) { for (unsigned i = 0; i < 8; ++i) *p++ = uint8_t(value >> (8 * i)); }
 uint64_t take_u64(const uint8_t *&p) { uint64_t value = 0; for (unsigned i = 0; i < 8; ++i) value |= uint64_t(*p++) << (8 * i); return value; }
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     if (!buffer) { *size = kStateSize; return SRH_OK; }
     if (*size < kStateSize) { *size = kStateSize; return SRH_UNAVAILABLE; }
     const auto &dac = static_cast<Card *>(context)->dac;
-    std::memcpy(buffer, "DAC2", 4); uint8_t *p = buffer + 4;
+    uint8_t *p = buffer;
     *p++ = dac.fifo_mode; *p++ = dac.held; *p++ = dac.read_index; *p++ = dac.write_index;
     *p++ = dac.count; *p++ = (dac.underflow ? 1 : 0) | (dac.overflow ? 2 : 0);
     put_u32(p, dac.fifo_rate); put_u64(p, dac.phase); *p++ = dac.current; *p++ = dac.next;
@@ -234,9 +235,9 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     *size = kStateSize;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != kStateSize || std::memcmp(buffer, "DAC2", 4)) return SRH_INVALID;
-    const uint8_t *p = buffer + 4;
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size != kStateSize) return SRH_INVALID;
+    const uint8_t *p = buffer;
     Dac next = static_cast<Card *>(context)->dac;
     const uint8_t mode = *p++, held = *p++, read_index = *p++, write_index = *p++, count = *p++, flags = *p++;
     const uint32_t rate = take_u32(p);
@@ -257,8 +258,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "PCM DA
     0xD0, kRegisterCount, 0, 0, 0, 0,
     R"({"sample_rate":44100,"stream_name":"PCM DAC"})", nullptr, nullptr,
     nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "dac", create, destroy, reset, property_count, property_info,
-                    property_get, property_set, save_state, load_state, &descriptor, nullptr, nullptr};
+                    property_get, property_set, State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

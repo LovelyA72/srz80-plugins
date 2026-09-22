@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <algorithm>
@@ -216,7 +217,7 @@ SrhStatus SRH_CALL get(void *context, uint32_t index, SrhValue *out) {
     return SRH_OK;
 }
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     constexpr uint64_t kStateSize = 1 + kVoiceCount * 29;
     if (!size) return SRH_INVALID;
     if (!buffer) { *size = kStateSize; return SRH_OK; }
@@ -233,15 +234,18 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     *size = kStateSize;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t kStateSize = 1 + kVoiceCount * 29;
     if (!buffer || size != kStateSize) return SRH_INVALID;
     auto &tone = *static_cast<Tone *>(context);
+    auto staged = tone;
     const uint8_t *in = buffer;
-    tone.volume = *in++;
-    for (auto &voice : tone.voices) {
+    staged.volume = *in++;
+    for (auto &voice : staged.voices) {
         voice.frequency_msb = *in++; voice.frequency_lsb = *in++; voice.decay = *in++;
-        voice.trigger = *in++; voice.gated = *in++ != 0;
+        voice.trigger = *in++;
+        if (*in > 1) return SRH_INVALID;
+        voice.gated = *in++ != 0;
         for (uint64_t *value : {&voice.phase_clocks, &voice.clock_remainder, &voice.envelope}) {
             *value = 0;
             for (uint32_t byte = 0; byte < 8; ++byte) *value |= static_cast<uint64_t>(*in++) << (byte * 8);
@@ -249,12 +253,14 @@ SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t siz
         voice.phase_clocks %= static_cast<uint64_t>(tone.divisor(voice)) * 2;
         voice.clock_remainder %= tone.sample_rate;
     }
+    tone = staged;
     return SRH_OK;
 }
 
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "Tone", "Basic dual tone melody card", 0xC0, kRegisterCount, 0, 0, 0, 0, R"({"clock_hz":1000000,"sample_rate":44100,"stream_name":"Intro Tone"})", nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "tone", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) { return srz80::sdk::valid(host) ? &api : nullptr; }

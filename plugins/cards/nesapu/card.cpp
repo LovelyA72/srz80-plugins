@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -611,7 +612,7 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
     }
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!context || !size)
         return SRH_INVALID;
     /* The carried cycle remainder comes first, then the unit's own image. */
@@ -633,18 +634,20 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = 8 + NesApu::state_size();
     if (!context || !buffer || size != required)
         return SRH_INVALID;
     auto &card = *static_cast<Card *>(context);
-    if (!card.apu.load_state(buffer + 8, NesApu::state_size()))
+    auto staged = card.apu;
+    if (!staged.load_state(buffer + 8, NesApu::state_size()))
         return SRH_INVALID;
     uint64_t accumulator = 0;
     for (uint32_t byte = 0; byte < 8; ++byte)
         accumulator |= static_cast<uint64_t>(buffer[byte]) << (byte * 8);
-    if (!card.apu.set_accumulator(accumulator, card.sample_rate))
+    if (!staged.set_accumulator(accumulator, card.sample_rate))
         return SRH_INVALID;
+    card.apu = staged;
     card.sample_error = SRH_OK;
     return SRH_OK;
 }
@@ -665,8 +668,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),
                                    nullptr,
                                    nullptr,
                                    0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "nesapu", create,    destroy,      reset, count,
-                    info,                get,      set,       save_state,   load_state,
+                    info,                get,      set,       State::save,   State::load,
                     &descriptor,         nullptr,  nullptr};
 } // namespace
 

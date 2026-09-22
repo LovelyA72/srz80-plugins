@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include "ymw258.hpp"
@@ -278,7 +279,7 @@ SrhStatus SRH_CALL get(void *context, uint32_t index, SrhValue *out) {
 
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     const auto &card = *static_cast<Card *>(context);
     const auto engine = card.engine.save_state();
@@ -295,8 +296,8 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size < 7) return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size < 7 || buffer[0] > 31 || buffer[1] > 7) return SRH_INVALID;
     uint32_t engine_size = 0;
     for (uint32_t byte = 0; byte < 4; ++byte) engine_size |= static_cast<uint32_t>(buffer[3 + byte]) << (byte * 8);
     if (engine_size > size - 7) return SRH_INVALID;
@@ -321,8 +322,9 @@ const SrhCardDescriptor descriptor{
     SRH_CARD_REQUIRES_IMAGE,
     R"({"chip_clock_hz":9878400,"stream_name":"YMW258"})", nullptr, nullptr,
     image_slots, 4};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ymw258", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

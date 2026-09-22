@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include "swp00.h"
@@ -197,7 +198,7 @@ SrhStatus SRH_CALL get(void *context, uint32_t index, SrhValue *out) {
     return SRH_OK;
 }
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size) return SRH_INVALID;
         auto &card = *static_cast<Card *>(context);
@@ -211,7 +212,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         return SRH_OK;
     });
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!buffer || size < 8) return SRH_INVALID;
         auto &card = *static_cast<Card *>(context);
@@ -234,8 +235,9 @@ const SrhCardDescriptor descriptor{
     SRH_CARD_REQUIRES_IMAGE,
     R"({"chip_clock_hz":33868800,"stream_name":"SWP00"})", nullptr, nullptr,
     image_slots, 4};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "swp00", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

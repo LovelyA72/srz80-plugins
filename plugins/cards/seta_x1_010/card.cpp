@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <nlohmann/json.hpp>
 
@@ -260,7 +261,7 @@ SrhStatus SRH_CALL property_info(void *, uint32_t, SrhProperty *) { return SRH_N
 SrhStatus SRH_CALL property_get(void *, uint32_t, SrhValue *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_NOT_FOUND; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!context || !size)
         return SRH_INVALID;
     constexpr uint64_t required = sizeof(uint64_t) + x1_010_core::serialized_size;
@@ -273,20 +274,22 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         return SRH_UNAVAILABLE;
     }
     auto &card = *static_cast<Card *>(context);
-    std::memcpy(buffer, &card.clock_accum, sizeof(card.clock_accum));
+    srz80::sdk::state::put(buffer, card.clock_accum);
     card.chip.save_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size);
     *size = required;
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = sizeof(uint64_t) + x1_010_core::serialized_size;
     if (!context || !buffer || size != required)
         return SRH_INVALID;
     auto &card = *static_cast<Card *>(context);
-    if (!card.chip.load_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size))
+    const auto accumulator = srz80::sdk::state::get<uint64_t>(buffer);
+    if (accumulator >= uint64_t(card.sample_rate) * kChipTicksPerSample ||
+        !card.chip.load_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size))
         return SRH_INVALID;
-    std::memcpy(&card.clock_accum, buffer, sizeof(card.clock_accum));
+    card.clock_accum = accumulator;
     card.sample_error = SRH_OK;
     return SRH_OK;
 }
@@ -308,9 +311,10 @@ const SrhCardDescriptor descriptor{
     nullptr,
     0};
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "x1_010", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

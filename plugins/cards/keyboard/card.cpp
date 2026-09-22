@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <nlohmann/json.hpp>
 #include <srz80/providers.h>
@@ -159,20 +160,20 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
 }
 void SRH_CALL destroy(void *p) { delete static_cast<Keyboard *>(p); }
 SrhStatus SRH_CALL reset(void *p, uint32_t) { return srz80::sdk::guard([&] { auto &k = *static_cast<Keyboard *>(p); k.rx.clear(); k.held.fill(0); k.have_packet_byte = false; k.errors = k.last_flags = 0; k.control = k.defaults; return k.update_irq(); }); }
-SrhStatus SRH_CALL save(void *p, uint8_t *out, uint64_t *size) {
-    return srz80::sdk::guard([&] { if (!size) return SRH_INVALID; auto &k = *static_cast<Keyboard *>(p); auto text = Json{{"schema", 1}, {"control", k.control}, {"errors", k.errors}, {"last_flags", k.last_flags}, {"held", k.held}, {"rx", Json::array()}}; for (const auto &e : k.rx) text["rx"].push_back({e.usage, e.flags}); const auto encoded = text.dump(); const auto capacity = *size; *size = encoded.size(); if (!out) return SRH_OK; if (capacity < encoded.size()) return SRH_UNAVAILABLE; std::memcpy(out, encoded.data(), encoded.size()); return SRH_OK; });
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *out, uint64_t *size) {
+    return srz80::sdk::guard([&] { if (!size) return SRH_INVALID; auto &k = *static_cast<Keyboard *>(p); auto text = Json{{"control", k.control}, {"errors", k.errors}, {"last_flags", k.last_flags}, {"held", k.held}, {"rx", Json::array()}}; for (const auto &e : k.rx) text["rx"].push_back({e.usage, e.flags}); const auto encoded = text.dump(); const auto capacity = *size; *size = encoded.size(); if (!out) return SRH_OK; if (capacity < encoded.size()) return SRH_UNAVAILABLE; std::memcpy(out, encoded.data(), encoded.size()); return SRH_OK; });
 }
-SrhStatus SRH_CALL load(void *p, const uint8_t *data, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *data, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!p || !data || !size || size > 4 * 1024 * 1024) return SRH_INVALID;
         auto &keyboard = *static_cast<Keyboard *>(p);
         const auto state = Json::parse(data, data + size, nullptr, false);
-        if (state.is_discarded() || state.value("schema", 0) != 1 || !state.contains("held") ||
+        if (state.is_discarded() || !state.is_object() || !state.contains("held") ||
             !state["held"].is_array() || state["held"].size() != keyboard.held.size() ||
             !state.contains("rx") || !state["rx"].is_array() || state["rx"].size() > keyboard.rx_capacity) return SRH_INVALID;
         const auto control = state.value("control", 256); const auto errors = state.value("errors", 256);
         const auto last_flags = state.value("last_flags", 256);
-        if (control > 3 || errors > 2 || last_flags > 3) return SRH_INVALID;
+        if (control < 0 || control > 3 || errors < 0 || errors > 2 || last_flags < 0 || last_flags > 3) return SRH_INVALID;
         std::array<uint8_t, 32> held{};
         for (size_t i = 0; i < held.size(); ++i) {
             if (!state["held"][i].is_number_unsigned() || state["held"][i].get<uint64_t>() > 255) return SRH_INVALID;
@@ -199,6 +200,7 @@ SrhStatus SRH_CALL info(void *, uint32_t index, SrhProperty *out) {
 SrhStatus SRH_CALL get(void *p, uint32_t index, SrhValue *out) { if (!srz80::sdk::valid(out) || index >= count(nullptr)) return SRH_INVALID; auto &k = *static_cast<Keyboard *>(p); if (index == 0) out->unsigned_value = k.base; else if (index == 1) out->unsigned_value = k.rx.size(); else if (index == 2) out->unsigned_value = (k.errors & 2) != 0; else if (index == 3) out->unsigned_value = k.pending(); else { uint32_t n = 0; for (uint8_t b : k.held) for (; b; b &= uint8_t(b - 1)) ++n; out->unsigned_value = n; } return SRH_OK; }
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "I/O", "Keyboard controller", "HID key events, held-key bitmap, and optional level IRQ", 0xA0, 64, 0, 0, 0, 0, R"({"rx_capacity":64})", nullptr, nullptr, nullptr, 0};
-const SrhPlugin api{SRH_INIT(SrhPlugin), "keyboard", create, destroy, reset, count, info, get, set, save, load, &descriptor, nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
+const SrhPlugin api{SRH_INIT(SrhPlugin), "keyboard", create, destroy, reset, count, info, get, set, State::save, State::load, &descriptor, nullptr, nullptr};
 }
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) { return srz80::sdk::valid(host) ? &api : nullptr; }

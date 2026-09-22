@@ -231,12 +231,11 @@ float core::sample() const {
 
 void core::save_state(uint8_t *dst) const {
     std::memset(dst, 0, serialized_size);
-    dst[0] = kMagic;
-    std::memcpy(dst + 1, regs_, kRegisters);
-    dst[1 + kRegisters] = register_latch_;
-    dst[2 + kRegisters] = active_ ? 1 : 0;
+    std::memcpy(dst, regs_, kRegisters);
+    dst[kRegisters] = register_latch_;
+    dst[1 + kRegisters] = active_ ? 1 : 0;
 
-    size_t off = 3 + kRegisters;
+    size_t off = 2 + kRegisters;
     auto put32 = [&](uint32_t v) {
         dst[off++] = static_cast<uint8_t>(v);
         dst[off++] = static_cast<uint8_t>(v >> 8);
@@ -267,14 +266,15 @@ void core::save_state(uint8_t *dst) const {
 }
 
 bool core::load_state(const uint8_t *src) {
-    if (src[0] != kMagic)
+    if (!src || src[kRegisters] > 15 || src[1 + kRegisters] > 1)
         return false;
 
-    std::memcpy(regs_, src + 1, kRegisters);
-    register_latch_ = src[1 + kRegisters] & 0x0f;
-    active_ = src[2 + kRegisters] != 0;
+    auto staged = *this;
+    std::memcpy(staged.regs_, src, kRegisters);
+    staged.register_latch_ = src[kRegisters];
+    staged.active_ = src[1 + kRegisters] != 0;
 
-    size_t off = 3 + kRegisters;
+    size_t off = 2 + kRegisters;
     auto get32 = [&]() -> uint32_t {
         uint32_t v = static_cast<uint32_t>(src[off]) | (static_cast<uint32_t>(src[off + 1]) << 8) |
                      (static_cast<uint32_t>(src[off + 2]) << 16) |
@@ -283,11 +283,11 @@ bool core::load_state(const uint8_t *src) {
         return v;
     };
 
-    rng_ = get32();
-    count_noise_ = static_cast<int32_t>(get32());
-    prescale_noise_ = src[off++];
+    staged.rng_ = get32();
+    staged.count_noise_ = static_cast<int32_t>(get32());
+    staged.prescale_noise_ = src[off++];
 
-    for (auto &t : tones_) {
+    for (auto &t : staged.tones_) {
         t.period = get32();
         t.volume = src[off++];
         t.count = static_cast<int32_t>(get32());
@@ -295,14 +295,25 @@ bool core::load_state(const uint8_t *src) {
         t.output = src[off++];
     }
 
-    envelope_.period = get32();
-    envelope_.count = static_cast<int32_t>(get32());
-    envelope_.step = static_cast<int8_t>(src[off++]);
-    envelope_.volume = src[off++];
-    envelope_.hold = src[off++];
-    envelope_.alternate = src[off++];
-    envelope_.attack = src[off++];
-    envelope_.holding = src[off++];
+    staged.envelope_.period = get32();
+    staged.envelope_.count = static_cast<int32_t>(get32());
+    staged.envelope_.step = static_cast<int8_t>(src[off++]);
+    staged.envelope_.volume = src[off++];
+    staged.envelope_.hold = src[off++];
+    staged.envelope_.alternate = src[off++];
+    staged.envelope_.attack = src[off++];
+    staged.envelope_.holding = src[off++];
+    if (staged.rng_ > 0x1ffff || staged.prescale_noise_ > 1 || staged.count_noise_ < 0 ||
+        staged.count_noise_ > 31 || staged.envelope_.period > 0xffff ||
+        staged.envelope_.count < 0 || staged.envelope_.count > 0x1ffff ||
+        staged.envelope_.volume > 15 || staged.envelope_.step < 0 || staged.envelope_.step > 15 ||
+        staged.envelope_.hold > 1 || staged.envelope_.holding > 1 ||
+        (staged.envelope_.alternate != 0 && staged.envelope_.alternate != 2 && staged.envelope_.alternate != 15) ||
+        (staged.envelope_.attack != 0 && staged.envelope_.attack != 15)) return false;
+    for (const auto &tone : staged.tones_)
+        if (tone.period > 0xfff || tone.count < 0 || tone.count > 0xfff ||
+            tone.duty_cycle > 31 || tone.output > 1) return false;
+    *this = staged;
     return true;
 }
 

@@ -223,11 +223,14 @@ bool Engine::load_state(const uint8_t *buffer, uint64_t size) {
         return impl_->core->load_state(buffer, size);
     if (!buffer || size != state_size())
         return false;
-    // Validate the blob before committing either the mirror or the device.
+    // Decode into a separate device so malformed fields cannot alter live DSP state.
+    Engine staged(Backend::ymfm, impl_->chip_clock_hz);
     std::vector<uint8_t> blob(buffer + kRegisters, buffer + size);
     ymfm::ymfm_saved_state state(blob, false);
-    impl_->ymfm->save_restore(state);
-    std::memcpy(impl_->regs, buffer, kRegisters);
+    staged.impl_->ymfm->save_restore(state);
+    if (!state.finished()) return false;
+    std::memcpy(staged.impl_->regs, buffer, kRegisters);
+    impl_.swap(staged.impl_);
     return true;
 }
 

@@ -1,4 +1,5 @@
 #include "opz_core.h"
+#include <state.hpp>
 
 #include "opz_tables.h"
 
@@ -138,7 +139,6 @@ inline int32_t add_clamped(int32_t left, int32_t right) {
 
 namespace {
 
-#pragma pack(push, 1)
 struct SavedOperator {
     uint32_t phase;
     uint16_t env_attenuation;
@@ -156,8 +156,6 @@ struct SavedChannel {
     int32_t output[2];
 };
 struct SavedState {
-    uint32_t magic;
-    uint32_t version;
     uint8_t address;
     uint8_t status;
     uint32_t busy_remaining;
@@ -176,10 +174,15 @@ struct SavedState {
     SavedOperator ops[Core::kOperators];
     SavedChannel chans[Core::kChannels];
 };
-#pragma pack(pop)
-
-constexpr uint32_t kStateMagic = 0x59324134; // "Y2A4"
-constexpr uint32_t kStateVersion = 1;
+template <class Archive> void archive_state(Archive &ar, SavedState &s) {
+    ar.fields(s.address, s.status, s.busy_remaining, s.lfo_counter, s.noise_lfsr,
+              s.noise_counter, s.noise_state, s.lfo_am, s.lfo_wave, s.env_counter,
+              s.timer_a_counter, s.timer_b_counter, s.timer_a_running, s.timer_b_running, s.regs);
+    for (auto &o : s.ops)
+        ar.fields(o.phase, o.env_attenuation, o.env_state, o.key_state, o.keyon_live,
+                  o.ramp_counter, o.actual_level, o.subphase, o.last_output);
+    for (auto &c : s.chans) ar.fields(c.feedback, c.feedback_in, c.output);
+}
 
 }
 
@@ -736,12 +739,18 @@ void Core::clock() {
     output_[1] = static_cast<int16_t>(roundtrip_fp(out[1]));
 }
 
-uint64_t Core::state_size() { return sizeof(SavedState); }
+uint64_t Core::state_size() {
+    static const uint64_t size = [] {
+        SavedState state{};
+        srz80::sdk::state::Writer writer;
+        archive_state(writer, state);
+        return writer.bytes.size();
+    }();
+    return size;
+}
 
 void Core::save_state(uint8_t *buffer) const {
     SavedState state{};
-    state.magic = kStateMagic;
-    state.version = kStateVersion;
     state.address = address_;
     state.status = status_;
     state.busy_remaining = busy_remaining_;
@@ -781,16 +790,22 @@ void Core::save_state(uint8_t *buffer) const {
         s.output[0] = c.output[0];
         s.output[1] = c.output[1];
     }
-    std::memcpy(buffer, &state, sizeof(state));
+    srz80::sdk::state::Writer writer;
+    archive_state(writer, state);
+    std::memcpy(buffer, writer.bytes.data(), writer.bytes.size());
 }
 
 bool Core::load_state(const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != sizeof(SavedState))
+    if (!buffer || size != state_size())
         return false;
     SavedState state{};
-    std::memcpy(&state, buffer, sizeof(state));
-    if (state.magic != kStateMagic || state.version != kStateVersion)
+    srz80::sdk::state::Reader reader({buffer, static_cast<size_t>(size)});
+    archive_state(reader, state);
+    if (!reader.finished() || state.timer_a_running > 1 || state.timer_b_running > 1 || state.noise_state > 1)
         return false;
+    for (const auto &o : state.ops)
+        if (o.env_state > kReverb || o.key_state > 1 || o.keyon_live > 3 || o.env_attenuation > 0x3ff)
+            return false;
 
     reset(); // restores derived state (channel/operator wiring, LFO waveforms)
 

@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <algorithm>
@@ -514,7 +515,7 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
     return srz80::sdk::guard([&]() { return set_impl(context, index, in); });
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     auto &card = *static_cast<Ym2414 *>(context);
@@ -537,7 +538,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t kHeader = 2 + 8;
     if (!buffer || size < kHeader)
         return SRH_INVALID;
@@ -549,6 +550,7 @@ SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t siz
     if (!card.chip->load_state(buffer + kHeader, card.chip->state_size()))
         return SRH_INVALID;
     card.address = buffer[1];
+    card.chip->write_address(card.address);
     card.sample_phase = 0;
     for (uint32_t i = 0; i < 8; ++i)
         card.sample_phase |= static_cast<uint64_t>(buffer[2 + i]) << (8 * i);
@@ -561,8 +563,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "YM2414
                                    "Yamaha YM2414 (OPZ) FM synthesizer", 0, 2, 0, 0, 0, 0,
                                    R"({"chip_clock_hz":3579545,"sample_rate":44100,"stream_name":"YM2414"})",
                                    nullptr, nullptr, nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ym2414", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 }
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

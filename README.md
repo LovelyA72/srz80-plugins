@@ -27,6 +27,64 @@ card, written by a non-human:
 The non-human has since discovered the public engine ABI, so the GUI is no
 longer part of the ritual.
 
+## Card execution-state format
+
+Every card with save/load callbacks uses `<state.hpp>` from `sdk/helpers`.
+The common envelope is 28 bytes, with all integer fields encoded little-endian:
+
+| Offset | Bytes | Field |
+| --- | --- | --- |
+| 0 | 8 | `SRZ80ST` followed by NUL |
+| 8 | 2 | Envelope version, currently 1 |
+| 10 | 2 | Header size, currently 28 |
+| 12 | 4 | Card payload version, currently 1 for each card |
+| 16 | 8 | Payload byte count |
+| 24 | 4 | FNV-1a 32-bit checksum of the payload |
+| 28 | variable | Card-specific payload |
+
+The checksum uses offset basis 2166136261 and prime 16777619, with unsigned
+32-bit wrapping. It detects corruption; it is not authentication. The host
+associates each blob with its plugin/card, so the envelope has no plugin ID.
+
+Implement private `save_payload` and `load_payload` functions with the usual
+`SrhSaveState` and `SrhLoadState` signatures, then register the shared callbacks:
+
+```cpp
+#include <state.hpp>
+
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
+// In SrhPlugin: ..., State::save, State::load, &descriptor, ...
+```
+
+The adapter handles null-buffer size queries, short buffers, overflow,
+exception containment, header validation, exact envelope length and checksum.
+Even an empty payload has a 28-byte envelope. Increase the third template
+argument when changing that card's payload layout or interpretation. Core
+serializers produce payload only, without their own magic, version or checksum.
+Payload prefixes may identify compatible hardware/configuration, such as the
+VDP model, YM2414 backend or SWP00 clock.
+
+Use `state::Writer` / `state::Reader` for field archives and
+`state::copy_payload` to implement buffer handling. `fields(...)` encodes
+fixed-width integers little-endian, booleans as 0/1, IEEE floating-point bit
+patterns and arrays element by element. Encode enums through an explicit
+fixed-width integer and check their allowed values. `Reader::finished()` must
+be true before committing decoded fields. Fixed-layout serializers may also
+use `state::put<T>` / `state::get<T>` after validating the entire buffer size.
+Byte arrays and UTF-8 JSON payloads may be copied directly; native structures,
+padding, pointers and native-endian multibyte values must not be persisted.
+
+Load into temporary state, validate lengths, configuration, enums and semantic
+ranges, then commit. Stage just the restorable fields or core when a live card
+owns registrations or other noncopyable resources. The envelope does not
+replace payload validation. Existing register-only snapshots remain
+register-only; common framing does not add missing DSP history.
+
+Only this format is accepted. Earlier unframed snapshots and old payload
+versions have no migration path. Project chunks (`save_project_data` /
+`load_project_data`) and GUI tool project documents retain their separate
+formats. W65C816 does not expose execution-state callbacks.
+
 ## Testing a card
 
 Card tests use two public surfaces:

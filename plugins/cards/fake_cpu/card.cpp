@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <cstring>
 #include <memory>
@@ -147,7 +148,7 @@ SrhStatus SRH_CALL set(void *p, uint32_t index, const SrhValue *in) {
         c.halted = in->unsigned_value != 0;
     return SRH_OK;
 }
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     constexpr uint64_t required = 10;
@@ -160,17 +161,17 @@ SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
         return SRH_UNAVAILABLE;
     }
     auto &c = *static_cast<Cpu *>(p);
-    std::memcpy(buffer, &c.pc, 8);
+    srz80::sdk::state::put(buffer, c.pc);
     buffer[8] = c.a;
     buffer[9] = c.halted ? 1 : 0;
     *size = required;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != 10)
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size != 10 || buffer[9] > 1)
         return SRH_INVALID;
     auto &c = *static_cast<Cpu *>(p);
-    std::memcpy(&c.pc, buffer, 8);
+    c.pc = srz80::sdk::state::get<uint64_t>(buffer);
     c.a = buffer[8];
     c.halted = buffer[9] != 0;
     return SRH_OK;
@@ -178,8 +179,9 @@ SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "CPU", "Fake CPU",
                                    "Minimal verification CPU", 0, 0, 0, 0, 0,
                                    SRH_CARD_SHOW_CLOCK, "{}", nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "fake_cpu", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

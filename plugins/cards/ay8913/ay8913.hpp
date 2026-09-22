@@ -23,7 +23,7 @@ class core {
 public:
     static constexpr unsigned kRegisters = 16;
     static constexpr unsigned kChannels = 3;
-    static constexpr uint64_t serialized_size = 75; // 1 magic + 74 state bytes
+    static constexpr uint64_t serialized_size = 74;
 
     core();
     void reset();
@@ -84,7 +84,6 @@ private:
     void build_tables();
     void write_reg(unsigned r, unsigned v);
 
-    static constexpr uint8_t kMagic = 0xA3;
     static constexpr uint8_t kEnvStepMask = 0x0f; // AY 16-step envelope
     static constexpr int kEnvStepMultiplier = 2;  // AY m_step = 2
 

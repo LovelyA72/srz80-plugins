@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <nlohmann/json.hpp>
@@ -16,7 +17,6 @@ using Json = nlohmann::json;
 
 constexpr uint32_t kChannelCount = 4;
 constexpr uint32_t kPortCount = 4;
-constexpr uint32_t kStateVersion = 1;
 constexpr int32_t kIrqAssertedMv = 1000;
 constexpr int32_t kSignalHighMv = 700;
 constexpr uint32_t kGlobalProperties = 3;
@@ -274,7 +274,6 @@ struct Ctc {
 
     std::string serialize() const {
         Json root;
-        root["schema"] = kStateVersion;
         root["vector"] = vector;
         Json channels_json = Json::array();
         for (const auto &ch : channels) {
@@ -319,9 +318,7 @@ struct Ctc {
         if (!data || size == 0)
             return false;
         const Json root = Json::parse(data, data + size, nullptr, false);
-        if (root.is_discarded() || !root.is_object() || !root.contains("schema") ||
-            !root["schema"].is_number_unsigned() ||
-            root["schema"].get<uint64_t>() != kStateVersion)
+        if (root.is_discarded() || !root.is_object())
             return false;
         if (!root.contains("vector") || !root["vector"].is_number_unsigned() ||
             !root.contains("channels") || !root["channels"].is_array() ||
@@ -803,7 +800,7 @@ SrhStatus SRH_CALL property_set(void *context, uint32_t index, const SrhValue *i
     });
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size)
             return SRH_INVALID;
@@ -825,7 +822,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     });
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!buffer || size == 0)
             return SRH_INVALID;
@@ -852,6 +849,7 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),
                                    nullptr,
                                    nullptr,
                                    0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin),
                     "ctc",
                     create,
@@ -861,8 +859,8 @@ const SrhPlugin api{SRH_INIT(SrhPlugin),
                     property_info,
                     property_get,
                     property_set,
-                    save_state,
-                    load_state,
+                    State::save,
+                    State::load,
                     &descriptor,
                     nullptr,
                     nullptr};

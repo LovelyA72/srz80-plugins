@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <srz80/providers.h>
 #include <srz80/signals.h>
@@ -179,24 +180,24 @@ SrhStatus SRH_CALL reset(void *p, uint32_t) {
         return m.update_irq();
     });
 }
-SrhStatus SRH_CALL save(void *p, uint8_t *out, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *out, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size) return SRH_INVALID;
         auto &m = *static_cast<Midi *>(p);
-        auto text = Json{{"schema", 1}, {"control", m.control}, {"errors", m.errors}, {"sequence", m.sequence}, {"rx", m.rx}}.dump();
+        auto text = Json{{"control", m.control}, {"errors", m.errors}, {"sequence", m.sequence}, {"rx", m.rx}}.dump();
         auto capacity = *size; *size = text.size();
         if (!out) return SRH_OK;
         if (capacity < text.size()) return SRH_UNAVAILABLE;
         std::memcpy(out, text.data(), text.size()); return SRH_OK;
     });
 }
-SrhStatus SRH_CALL load(void *p, const uint8_t *data, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *data, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         auto &m = *static_cast<Midi *>(p);
         if (!data || !size || size > 4 * 1024 * 1024) return SRH_INVALID;
         auto j = Json::parse(data, data + size);
         auto control = j.at("control").get<int>(); auto errors = j.at("errors").get<int>();
-        if (j.at("schema") != 1 || control < 0 || control > 7 || errors < 0 || (errors & ~12) ||
+        if (control < 0 || control > 7 || errors < 0 || (errors & ~12) ||
             !j.at("sequence").is_number_unsigned() || !j.at("rx").is_array() || j.at("rx").size() > m.rx_capacity) return SRH_INVALID;
         std::deque<std::pair<uint64_t, uint8_t>> rx;
         for (const auto &entry : j.at("rx")) {
@@ -232,7 +233,8 @@ SrhStatus SRH_CALL get(void *p, uint32_t index, SrhValue *out) {
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "I/O", "MIDI 1.0", "Byte-transparent MIDI port with a CPU-independent level IRQ",
     0x90, 4, 0, 0, 0, 0, R"({"irq":"IRQ","rx_capacity":256,"tx_capacity":4096})", nullptr, nullptr};
-const SrhPlugin api{SRH_INIT(SrhPlugin), "midi", create, destroy, reset, count, info, get, set, save, load, &descriptor, nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
+const SrhPlugin api{SRH_INIT(SrhPlugin), "midi", create, destroy, reset, count, info, get, set, State::save, State::load, &descriptor, nullptr, nullptr};
 }
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

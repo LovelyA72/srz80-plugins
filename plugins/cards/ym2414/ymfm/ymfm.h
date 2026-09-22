@@ -449,24 +449,29 @@ public:
 	void save(DataType (&data)[Count]) { for (uint32_t index = 0; index < Count; index++) save(data[index]); }
 
 	// restore data from the buffer
-	void restore(bool &data) { data = read() ? true : false; }
+	void restore(bool &data) { auto value = read(); m_valid &= value <= 1; data = value != 0; }
 	void restore(int8_t &data) { data = read(); }
 	void restore(uint8_t &data) { data = read(); }
 	void restore(int16_t &data) { data = read(); data |= read() << 8; }
 	void restore(uint16_t &data) { data = read(); data |= read() << 8; }
 	void restore(int32_t &data) { data = read(); data |= read() << 8; data |= read() << 16; data |= read() << 24; }
 	void restore(uint32_t &data) { data = read(); data |= read() << 8; data |= read() << 16; data |= read() << 24; }
-	void restore(envelope_state &data) { data = envelope_state(read()); }
+	void restore(envelope_state &data) { auto value = read(); m_valid &= value < EG_STATES; data = envelope_state(value < EG_STATES ? value : EG_RELEASE); }
 	template<typename DataType, int Count>
 	void restore(DataType (&data)[Count]) { for (uint32_t index = 0; index < Count; index++) restore(data[index]); }
 
 	// internal helper
 	ymfm_saved_state &write(uint8_t data) { m_buffer.push_back(data); return *this; }
-	uint8_t read() { return (m_offset < int32_t(m_buffer.size())) ? m_buffer[m_offset++] : 0; }
+	uint8_t read() {
+		if (m_offset < 0 || size_t(m_offset) >= m_buffer.size()) { m_valid = false; return 0; }
+		return m_buffer[m_offset++];
+	}
+	bool finished() const { return m_valid && m_offset >= 0 && size_t(m_offset) == m_buffer.size(); }
 
 	// internal state
 	std::vector<uint8_t> &m_buffer;
 	int32_t m_offset;
+	bool m_valid = true;
 };
 
 

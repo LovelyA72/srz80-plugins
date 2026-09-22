@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <algorithm>
 #include <array>
 #include <boundary.hpp>
@@ -191,14 +192,14 @@ uint32_t SRH_CALL property_count(void *) { return 0; }
 SrhStatus SRH_CALL property_info(void *, uint32_t, SrhProperty *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL property_get(void *, uint32_t, SrhValue *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_NOT_FOUND; }
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     constexpr uint64_t kStateSize = 147; if (!size) return SRH_INVALID; if (!buffer) { *size = kStateSize; return SRH_OK; }
     if (*size < kStateSize) { *size = kStateSize; return SRH_UNAVAILABLE; } auto &lcd = *static_cast<Lcd1602 *>(context);
     std::memcpy(buffer, lcd.ddram.data(), lcd.ddram.size()); std::memcpy(buffer + 80, lcd.cgram.data(), lcd.cgram.size());
     buffer[144] = lcd.address; buffer[145] = static_cast<uint8_t>(lcd.cgram_selected | (lcd.increment << 1)); buffer[146] = static_cast<uint8_t>(lcd.display_on | (lcd.cursor_on << 1)); *size = kStateSize; return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != 147)
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size != 147 || buffer[144] > 0x7f || buffer[145] > 3 || buffer[146] > 3)
         return SRH_INVALID;
     auto &lcd = *static_cast<Lcd1602 *>(context);
     std::memcpy(lcd.ddram.data(), buffer, lcd.ddram.size());
@@ -214,8 +215,9 @@ SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t siz
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Video", "LCD1602",
     "HD44780-compatible 16 by 2 character LCD with a 480 by 120 dot-grid surface", 0xC0, 2,
     0, 0, 0, 0, "{}", nullptr, nullptr, nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "lcd1602", create, destroy, reset, property_count,
-                    property_info, property_get, property_set, save_state, load_state,
+                    property_info, property_get, property_set, State::save, State::load,
                     &descriptor, nullptr, nullptr};
 } // namespace
 

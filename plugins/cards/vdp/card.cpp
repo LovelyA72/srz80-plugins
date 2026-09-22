@@ -1,3 +1,4 @@
+#include <state.hpp>
 // SRZ80 card plugin: Yamaha V9938 / V9958 VDP.
 //
 // This is the host-facing half of the port in v9938_core.cpp.  It owns the
@@ -290,25 +291,18 @@ class Card final : public srz80::vdp::v99x8_device {
     void save(uint8_t *buffer) const {
         if (!buffer)
             return;
-        const uint32_t header[2] = {state_version, uint32_t(model_)};
-        std::memcpy(buffer, header, sizeof(header));
+        srz80::sdk::state::put(buffer, uint32_t(model_));
         v99x8_device::save_state(buffer + state_header_size);
-        std::memcpy(buffer + state_size() - sizeof(frame_number_), &frame_number_, sizeof(frame_number_));
+        srz80::sdk::state::put(buffer + state_size() - 8, frame_number_);
     }
 
     bool load(const uint8_t *buffer, uint64_t size) {
-        if (!buffer || size < state_header_size) return false;
-        uint32_t header[2] = {0, 0};
-        std::memcpy(header, buffer, sizeof(header));
-        if (header[0] < 1 || header[0] > state_version || header[1] != uint32_t(model_))
+        if (!buffer || size != state_size()) return false;
+        if (srz80::sdk::state::get<uint32_t>(buffer) != uint32_t(model_))
             return false;
-        const bool legacy = header[0] == 1;
-        const uint64_t core_size = header[0] < 3 ? LEGACY_STATE_SIZE : v99x8_device::state_size();
-        if (size != state_header_size + core_size + (legacy ? 0 : sizeof(frame_number_))) return false;
+        const uint64_t core_size = v99x8_device::state_size();
         if (!v99x8_device::load_state(buffer + state_header_size, core_size)) return false;
-        frame_number_ = 0;
-        if (!legacy)
-            std::memcpy(&frame_number_, buffer + size - sizeof(frame_number_), sizeof(frame_number_));
+        frame_number_ = srz80::sdk::state::get<uint64_t>(buffer + size - 8);
         return true;
     }
 
@@ -415,8 +409,7 @@ class Card final : public srz80::vdp::v99x8_device {
     }
 
   private:
-    static constexpr uint32_t state_version = 3;
-    static constexpr uint64_t state_header_size = sizeof(uint32_t) * 2;
+    static constexpr uint64_t state_header_size = 4;
 
     // The raster.  One event per scanline, rescheduled from inside its own
     // callback.  The delay is a 64-bit integer division of the current crystal
@@ -542,7 +535,7 @@ SrhStatus SRH_CALL property_set(void *context, uint32_t index, const SrhValue *i
         [&] { return static_cast<Card *>(context)->property_set(index, in) ? SRH_OK : SRH_INVALID; });
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size)
             return SRH_INVALID;
@@ -562,7 +555,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     });
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&] {
         return static_cast<Card *>(context)->load(buffer, size) ? SRH_OK : SRH_INVALID;
     });
@@ -605,6 +598,7 @@ const SrhCardDescriptor descriptor{
     0,
 };
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin),
                     "vdp",
                     create,
@@ -614,8 +608,8 @@ const SrhPlugin api{SRH_INIT(SrhPlugin),
                     property_info,
                     property_get,
                     property_set,
-                    save_state,
-                    load_state,
+                    State::save,
+                    State::load,
                     &descriptor,
                     save_project_data,
                     load_project_data};

@@ -155,8 +155,6 @@ public:
         sizeof(uint8_t) * 32 + sizeof(uint8_t) * 10 + sizeof(uint8_t) * 48 +
         sizeof(int32_t) * 17 + sizeof(int16_t) * 2 + 5 + sizeof(uint16_t);
 
-    // Versions 1/2 omitted the two-byte address latch from their size calculation.
-    static constexpr uint64_t LEGACY_STATE_SIZE = STATE_HEADER_SIZE + VRAM_TOTAL_SIZE - sizeof(uint16_t);
     static constexpr uint64_t COMMAND_STATE_SIZE = 13 * sizeof(int32_t) + 5;
 
     // PORT: the engine surface.  Width is HVISIBLE; height is the current
@@ -2473,10 +2471,12 @@ void v99x8_device::save_state(uint8_t *buffer) const
 		m_scanline_start, m_vblank_start, m_scanline_max, m_height,
 		m_pal_ntsc, m_v9958_sp_mode, m_second_field
 	};
-	std::memcpy(buffer, scalars, sizeof(scalars));
+	for (size_t i = 0; i < std::size(scalars); ++i)
+		srz80::sdk::state::put(buffer + 4 * i, scalars[i]);
 	buffer += sizeof(scalars);
 	const int16_t mouse[] = { m_mx_delta, m_my_delta };
-	std::memcpy(buffer, mouse, sizeof(mouse));
+	for (size_t i = 0; i < std::size(mouse); ++i)
+		srz80::sdk::state::put(buffer + 2 * i, mouse[i]);
 	buffer += sizeof(mouse);
 	std::memcpy(buffer, &m_button_state, sizeof(m_button_state));
 	buffer += sizeof(m_button_state);
@@ -2486,7 +2486,7 @@ void v99x8_device::save_state(uint8_t *buffer) const
 	buffer += sizeof(m_cmd_write);
 	std::memcpy(buffer, &m_read_ahead, sizeof(m_read_ahead));
 	buffer += sizeof(m_read_ahead);
-	std::memcpy(buffer, &m_address_latch, sizeof(m_address_latch));
+	srz80::sdk::state::put(buffer, m_address_latch);
 	buffer += sizeof(m_address_latch);
 	std::memcpy(buffer, &m_int_state, sizeof(m_int_state));
 	buffer += sizeof(m_int_state);
@@ -2494,7 +2494,8 @@ void v99x8_device::save_state(uint8_t *buffer) const
 	std::memcpy(buffer, m_vram.data(), size_t(m_vram_size));
 	buffer += VRAM_TOTAL_SIZE;
 	const int32_t command[] = { m_mmc.SX, m_mmc.SY, m_mmc.DX, m_mmc.DY, m_mmc.TX, m_mmc.TY, m_mmc.NX, m_mmc.NY, m_mmc.MX, m_mmc.ASX, m_mmc.ADX, m_mmc.ANX, m_vdp_ops_count };
-	std::memcpy(buffer, command, sizeof(command));
+	for (size_t i = 0; i < std::size(command); ++i)
+		srz80::sdk::state::put(buffer + 4 * i, command[i]);
 	buffer += sizeof(command);
 	*buffer++ = m_mmc.CL;
 	*buffer++ = m_mmc.LO;
@@ -2506,10 +2507,11 @@ void v99x8_device::save_state(uint8_t *buffer) const
 
 bool v99x8_device::load_state(const uint8_t *buffer, uint64_t size)
 {
-	if (!buffer || (size != state_size() && size != LEGACY_STATE_SIZE))
+	if (!buffer || size != state_size())
 		return false;
 	int32_t validated[17];
-	std::memcpy(validated, buffer + 90, sizeof(validated));
+	for (size_t i = 0; i < std::size(validated); ++i)
+		validated[i] = srz80::sdk::state::get<int32_t>(buffer + 90 + 4 * i);
 	if (validated[0] < 0 || validated[0] > 16 || validated[1] < -7 || validated[1] > 8 ||
 	    (validated[2] != 192 && validated[2] != 212) || validated[3] < 0 || validated[3] > V9938_MODE_UNKNOWN ||
 	    validated[9] != m_vram_size || (validated[13] != 262 && validated[13] != 313) ||
@@ -2521,7 +2523,8 @@ bool v99x8_device::load_state(const uint8_t *buffer, uint64_t size)
 	std::memcpy(m_cont_reg, buffer, sizeof(m_cont_reg));
 	buffer += sizeof(m_cont_reg);
 	int32_t scalars[17];
-	std::memcpy(scalars, buffer, sizeof(scalars));
+	for (size_t i = 0; i < std::size(scalars); ++i)
+		scalars[i] = srz80::sdk::state::get<int32_t>(buffer + 4 * i);
 	buffer += sizeof(scalars);
 	m_offset_x = scalars[0];
 	m_offset_y = scalars[1];
@@ -2541,7 +2544,8 @@ bool v99x8_device::load_state(const uint8_t *buffer, uint64_t size)
 	m_v9958_sp_mode = uint8_t(scalars[15]);
 	m_second_field = uint8_t(scalars[16]);
 	int16_t mouse[2];
-	std::memcpy(mouse, buffer, sizeof(mouse));
+	for (size_t i = 0; i < std::size(mouse); ++i)
+		mouse[i] = srz80::sdk::state::get<int16_t>(buffer + 2 * i);
 	buffer += sizeof(mouse);
 	m_mx_delta = mouse[0];
 	m_my_delta = mouse[1];
@@ -2553,18 +2557,19 @@ bool v99x8_device::load_state(const uint8_t *buffer, uint64_t size)
 	buffer += sizeof(m_cmd_write);
 	std::memcpy(&m_read_ahead, buffer, sizeof(m_read_ahead));
 	buffer += sizeof(m_read_ahead);
-	std::memcpy(&m_address_latch, buffer, sizeof(m_address_latch));
+	m_address_latch = srz80::sdk::state::get<uint16_t>(buffer);
 	buffer += sizeof(m_address_latch);
 	std::memcpy(&m_int_state, buffer, sizeof(m_int_state));
 	buffer += sizeof(m_int_state);
 	std::fill(m_vram.begin(), m_vram.end(), uint8_t{0});
-	std::memcpy(m_vram.data(), buffer, std::min<uint64_t>(m_vram_size, size - STATE_HEADER_SIZE));
+	std::memcpy(m_vram.data(), buffer, size_t(m_vram_size));
 	m_mmc = {};
 	m_vdp_ops_count = 0;
-	if (size == state_size()) {
+	{
 		buffer += VRAM_TOTAL_SIZE;
 		int32_t command[13];
-		std::memcpy(command, buffer, sizeof(command));
+		for (size_t i = 0; i < std::size(command); ++i)
+			command[i] = srz80::sdk::state::get<int32_t>(buffer + 4 * i);
 		buffer += sizeof(command);
 		m_mmc.SX = command[0];
 		m_mmc.SY = command[1];
@@ -2585,8 +2590,6 @@ bool v99x8_device::load_state(const uint8_t *buffer, uint64_t size)
 		m_mmc.MXS = *buffer++;
 		m_mmc.MXD = *buffer++;
 
-	} else {
-		m_stat_reg[2] &= 0xfe;
 	}
 	device_post_load();
 

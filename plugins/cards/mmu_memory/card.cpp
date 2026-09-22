@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <cstdint>
@@ -128,7 +129,7 @@ SrhStatus SRH_CALL property_info(void *, uint32_t, SrhProperty *) { return SRH_N
 SrhStatus SRH_CALL property_get(void *, uint32_t, SrhValue *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_NOT_FOUND; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     constexpr uint64_t state_size = memory_size + 1;
@@ -146,7 +147,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     *size = state_size;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     if (!buffer || size != memory_size + 1)
         return SRH_INVALID;
     auto &memory = *static_cast<MmuMemory *>(context);
@@ -159,9 +160,10 @@ const SrhCardDescriptor descriptor{
     SRH_INIT(SrhCardDescriptor), "Memory", "Banked 512K RAM + 512K ROM",
     "SC714-compatible banked memory module", 0, 0x10000, 0, 256, 0,
     SRH_CARD_REQUIRES_IMAGE | SRH_CARD_REQUIRES_IO_SPACE, R"({"io_space":"cpu0.io"})", "io_space", nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "mmu_memory", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

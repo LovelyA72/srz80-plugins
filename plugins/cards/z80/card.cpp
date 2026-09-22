@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <cstdint>
 #include <cstdio>
@@ -408,19 +409,14 @@ struct PackedZ80 {
     int32_t wait_cycles, op_tstate, cycles_remaining, bus_error;
     uint8_t irq_high, nmi_high;
 };
-static_assert(std::is_trivially_copyable_v<PackedZ80>);
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
-    if (!size)
-        return SRH_INVALID;
-    constexpr uint64_t required = sizeof(PackedZ80);
-    if (!buffer) {
-        *size = required;
-        return SRH_OK;
-    }
-    if (*size < required) {
-        *size = required;
-        return SRH_UNAVAILABLE;
-    }
+template <class Archive> void archive_state(Archive &ar, PackedZ80 &s) {
+    ar.fields(s.af, s.bc, s.de, s.hl, s.af2, s.bc2, s.de2, s.hl2, s.ix, s.iy,
+              s.wz, s.sp, s.pc, s.i, s.r, s.iff1, s.iff2, s.im, s.halted,
+              s.int_pending, s.nmi_pending, s.ei_delay, s.ld_a_ir, s.int_vector,
+              s.q, s.cycles, s.total_cycles, s.wait_cycles, s.op_tstate,
+              s.cycles_remaining, s.bus_error, s.irq_high, s.nmi_high);
+}
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     auto &c = *static_cast<Cpu *>(p);
     auto &z = *c.z80;
     PackedZ80 s{};
@@ -457,17 +453,20 @@ SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
     s.bus_error = c.bus_error;
     s.irq_high = c.irq_high ? 1 : 0;
     s.nmi_high = c.nmi_high ? 1 : 0;
-    std::memcpy(buffer, &s, sizeof(s));
-    *size = sizeof(s);
-    return SRH_OK;
+    srz80::sdk::state::Writer writer;
+    archive_state(writer, s);
+    return srz80::sdk::state::copy_payload(writer.bytes, buffer, size);
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != sizeof(PackedZ80))
-        return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     auto &c = *static_cast<Cpu *>(p);
     auto &z = *c.z80;
     PackedZ80 s{};
-    std::memcpy(&s, buffer, sizeof(s));
+    srz80::sdk::state::Reader reader({buffer, static_cast<size_t>(size)});
+    archive_state(reader, s);
+    if (!reader.finished() || s.iff1 > 1 || s.iff2 > 1 || s.im > 2 || s.halted > 1 ||
+        s.int_pending > 1 || s.nmi_pending > 1 || s.ei_delay > 1 || s.ld_a_ir > 1 ||
+        s.irq_high > 1 || s.nmi_high > 1 || s.bus_error < SRH_OK || s.bus_error > SRH_CONFLICT)
+        return SRH_INVALID;
     z.af.w = s.af;
     z.bc.w = s.bc;
     z.de.w = s.de;
@@ -509,9 +508,10 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "CPU", "Z80",
                                    SRH_CARD_REQUIRES_IO_SPACE | SRH_CARD_SHOW_CLOCK,
                                    R"({"io_space":"cpu0.io","clock_hz_hint":3686400})", "io_space",
                                    nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "z80", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <nlohmann/json.hpp>
 
@@ -401,7 +402,7 @@ SrhStatus SRH_CALL property_set(void *context, uint32_t index, const SrhValue *i
     return SRH_INVALID; // observables are read-only
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size || !context)
         return SRH_INVALID;
     constexpr uint64_t required = sizeof(uint64_t) + ay8913::core::serialized_size;
@@ -414,20 +415,21 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         return SRH_UNAVAILABLE;
     }
     auto &card = *static_cast<Card *>(context);
-    std::memcpy(buffer, &card.clock_accum, sizeof(card.clock_accum));
+    srz80::sdk::state::put(buffer, card.clock_accum);
     card.core.save_state(buffer + sizeof(card.clock_accum));
     *size = required;
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = sizeof(uint64_t) + ay8913::core::serialized_size;
     if (!context || !buffer || size != required)
         return SRH_INVALID;
     auto &card = *static_cast<Card *>(context);
-    if (!card.core.load_state(buffer + sizeof(card.clock_accum)))
+    const auto accumulator = srz80::sdk::state::get<uint64_t>(buffer);
+    if (accumulator >= uint64_t(card.sample_rate) * 8 || !card.core.load_state(buffer + sizeof(card.clock_accum)))
         return SRH_INVALID;
-    std::memcpy(&card.clock_accum, buffer, sizeof(card.clock_accum));
+    card.clock_accum = accumulator;
     return SRH_OK;
 }
 
@@ -438,9 +440,10 @@ const SrhCardDescriptor descriptor{
     R"({"chip_clock_hz":1789773,"sample_rate":44100,"stream_name":"AY-3-8913","data_first":false})",
     nullptr, nullptr, nullptr, 0};
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ay8913", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

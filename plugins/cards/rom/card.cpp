@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <memory>
 #include <vector>
@@ -69,20 +70,21 @@ SrhStatus SRH_CALL get(void *, uint32_t, SrhValue *) {
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) {
     return SRH_NOT_FOUND;
 }
-SrhStatus SRH_CALL save_state(void *, uint8_t *, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *, uint8_t *, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     *size = 0;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *, const uint8_t *buffer, uint64_t size) {
-    return (!buffer && size) ? SRH_INVALID : SRH_OK;
+SrhStatus SRH_CALL load_payload(void *, const uint8_t *, uint64_t size) {
+    return size == 0 ? SRH_OK : SRH_INVALID;
 }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Memory", "ROM",
                                    "Read-only memory image", 0, 256, 0, 0, 0,
                                    SRH_CARD_REQUIRES_IMAGE, "{}", nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "rom", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

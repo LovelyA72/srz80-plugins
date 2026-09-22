@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <cstdint>
 #include <cstdio>
@@ -494,7 +495,7 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     if (!buffer) {
@@ -506,47 +507,35 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         return SRH_UNAVAILABLE;
     }
     auto &cpu = *static_cast<Cpu *>(context);
-    uint64_t offset = 0;
-    std::memcpy(buffer + offset, cpu.r, sizeof(cpu.r)); offset += sizeof(cpu.r);
-    std::memcpy(buffer + offset, &cpu.pc, 4); offset += 4;
-    buffer[offset++] = cpu.running;
-    buffer[offset++] = uint8_t(cpu.mode);
-    std::memcpy(buffer + offset, &cpu.cycles, 8); offset += 8;
-    std::memcpy(buffer + offset, &cpu.epc, 4); offset += 4;
-    std::memcpy(buffer + offset, &cpu.cause, 4); offset += 4;
-    buffer[offset++] = cpu.irq_enable;
-    buffer[offset++] = cpu.irq_pending;
-    std::memcpy(buffer + offset, &cpu.irq_number, 4); offset += 4;
-    *size = kSavedStateSize;
-    return SRH_OK;
+    srz80::sdk::state::Writer writer;
+    writer.fields(cpu.r, cpu.pc, cpu.running, uint8_t(cpu.mode), cpu.cycles,
+                  cpu.epc, cpu.cause, cpu.irq_enable, cpu.irq_pending, cpu.irq_number);
+    return srz80::sdk::state::copy_payload(writer.bytes, buffer, size);
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     if (!buffer || size != kSavedStateSize)
         return SRH_INVALID;
     auto &cpu = *static_cast<Cpu *>(context);
-    uint64_t offset = 0;
-    std::memcpy(cpu.r, buffer + offset, sizeof(cpu.r)); offset += sizeof(cpu.r);
-    std::memcpy(&cpu.pc, buffer + offset, 4); offset += 4;
-    cpu.running = buffer[offset++] != 0;
-    cpu.mode = Mode(buffer[offset++] & 1);
-    std::memcpy(&cpu.cycles, buffer + offset, 8); offset += 8;
-    std::memcpy(&cpu.epc, buffer + offset, 4); offset += 4;
-    std::memcpy(&cpu.cause, buffer + offset, 4); offset += 4;
-    cpu.irq_enable = buffer[offset++] != 0;
-    cpu.irq_pending = buffer[offset++] != 0;
-    std::memcpy(&cpu.irq_number, buffer + offset, 4);
-    cpu.r[0] = 0;
-    cpu.faulted = false;
-    cpu.fault[0] = '\0';
+    auto staged = cpu;
+    uint8_t mode = 0;
+    srz80::sdk::state::Reader reader({buffer, static_cast<size_t>(size)});
+    reader.fields(staged.r, staged.pc, staged.running, mode, staged.cycles,
+                  staged.epc, staged.cause, staged.irq_enable, staged.irq_pending, staged.irq_number);
+    if (!reader.finished() || mode > 1 || staged.r[0] != 0) return SRH_INVALID;
+    staged.mode = Mode(mode);
+    staged.faulted = false;
+    staged.fault[0] = '\0';
+    cpu = staged;
     return SRH_OK;
 }
 
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "CPU", "SRC32-ALMSI", "SRC32 CPU",
                                    0, 0, 0, 0, 0, SRH_CARD_SHOW_CLOCK, "{}", nullptr, nullptr,
                                    nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "src32", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

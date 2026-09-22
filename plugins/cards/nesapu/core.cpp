@@ -73,8 +73,6 @@ const uint16_t *delta_periods(Region region) {
    then a fixed field order.  Only the field order has to survive a version bump;
    every value is written byte-wise, low byte first, so the image does not depend
    on the host's word size or byte order. */
-constexpr uint8_t kStateTag[8] = {'N', 'E', 'S', 'A', 'P', 'U', '2', 'A'};
-constexpr uint64_t kStateVersion = 1;
 
 void put16(uint8_t *out, uint16_t value) {
     out[0] = static_cast<uint8_t>(value);
@@ -82,10 +80,6 @@ void put16(uint8_t *out, uint16_t value) {
 }
 uint16_t get16(const uint8_t *in) {
     return static_cast<uint16_t>(in[0] | (static_cast<uint16_t>(in[1]) << 8));
-}
-void put64(uint8_t *out, uint64_t value) {
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        out[byte] = static_cast<uint8_t>(value >> (byte * 8));
 }
 
 } // namespace
@@ -622,11 +616,6 @@ uint32_t NesApu::channel_output(uint32_t channel) const {
 
 void NesApu::save_state(uint8_t *buffer) const {
     uint8_t *out = buffer;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        out[byte] = kStateTag[byte];
-    out += 8;
-    put64(out, kStateVersion);
-    out += 8;
     *out++ = static_cast<uint8_t>(region_);
     *out++ = frame_step_;
     *out++ = divider_;
@@ -727,16 +716,12 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     if (buffer == nullptr || size != state_size())
         return false;
     const uint8_t *in = buffer;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        if (in[byte] != kStateTag[byte])
-            return false;
-    in += 8;
-    uint64_t version = 0;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        version |= static_cast<uint64_t>(in[byte]) << (byte * 8);
-    in += 8;
-    if (version != kStateVersion)
-        return false;
+    bool valid_bools = true;
+    const auto read_bool = [&] {
+        const auto value = *in++;
+        valid_bools = valid_bools && value <= 1;
+        return value != 0;
+    };
 
     /* The image is decoded into a staged unit first, so an image that turns out
        to be malformed is rejected without disturbing anything that is live. */
@@ -745,9 +730,9 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.frame_step_ = *in++;
     staged.divider_ = *in++;
     staged.reset_delay_ = *in++;
-    staged.five_step_ = *in++ != 0;
-    staged.length_clocked_ = *in++ != 0;
-    staged.irq_inhibit_ = *in++ != 0;
+    staged.five_step_ = read_bool();
+    staged.length_clocked_ = read_bool();
+    staged.irq_inhibit_ = read_bool();
     staged.status_ = *in++;
     staged.frame_count_ = get16(in);
     in += 2;
@@ -768,20 +753,20 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
         pulse.duty = *in++;
         pulse.step = *in++;
         pulse.output = *in++;
-        pulse.started = *in++ != 0;
-        pulse.length.halt = *in++ != 0;
-        pulse.length.enabled = *in++ != 0;
+        pulse.started = read_bool();
+        pulse.length.halt = read_bool();
+        pulse.length.enabled = read_bool();
         pulse.length.value = *in++;
-        pulse.envelope.start = *in++ != 0;
-        pulse.envelope.loop = *in++ != 0;
-        pulse.envelope.constant = *in++ != 0;
+        pulse.envelope.start = read_bool();
+        pulse.envelope.loop = read_bool();
+        pulse.envelope.constant = read_bool();
         pulse.envelope.divider = *in++;
         pulse.envelope.countdown = *in++;
         pulse.envelope.decay = *in++;
         pulse.envelope.volume = *in++;
-        pulse.sweep.enabled = *in++ != 0;
-        pulse.sweep.negate = *in++ != 0;
-        pulse.sweep.reload = *in++ != 0;
+        pulse.sweep.enabled = read_bool();
+        pulse.sweep.negate = read_bool();
+        pulse.sweep.reload = read_bool();
         pulse.sweep.divider = *in++;
         pulse.sweep.countdown = *in++;
         pulse.sweep.shift = *in++;
@@ -801,9 +786,9 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.triangle_.output = *in++;
     staged.triangle_.linear = *in++;
     staged.triangle_.reload = *in++;
-    staged.triangle_.control = *in++ != 0;
-    staged.triangle_.length.halt = *in++ != 0;
-    staged.triangle_.length.enabled = *in++ != 0;
+    staged.triangle_.control = read_bool();
+    staged.triangle_.length.halt = read_bool();
+    staged.triangle_.length.enabled = read_bool();
     staged.triangle_.length.value = *in++;
     if (staged.triangle_.step > 31 || staged.triangle_.output > 15 ||
         staged.triangle_.reload > 127 || staged.triangle_.linear > 127 ||
@@ -817,14 +802,14 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.noise_.shift = get16(in);
     in += 2;
     staged.noise_.rate = *in++;
-    staged.noise_.mode = *in++ != 0;
+    staged.noise_.mode = read_bool();
     staged.noise_.output = *in++;
-    staged.noise_.length.halt = *in++ != 0;
-    staged.noise_.length.enabled = *in++ != 0;
+    staged.noise_.length.halt = read_bool();
+    staged.noise_.length.enabled = read_bool();
     staged.noise_.length.value = *in++;
-    staged.noise_.envelope.start = *in++ != 0;
-    staged.noise_.envelope.loop = *in++ != 0;
-    staged.noise_.envelope.constant = *in++ != 0;
+    staged.noise_.envelope.start = read_bool();
+    staged.noise_.envelope.loop = read_bool();
+    staged.noise_.envelope.constant = read_bool();
     staged.noise_.envelope.divider = *in++;
     staged.noise_.envelope.countdown = *in++;
     staged.noise_.envelope.decay = *in++;
@@ -853,15 +838,17 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.delta_.shift = *in++;
     staged.delta_.bits = *in++;
     staged.delta_.buffer = *in++;
-    staged.delta_.buffered = *in++ != 0;
-    staged.delta_.silent = *in++ != 0;
-    staged.delta_.loop = *in++ != 0;
-    staged.delta_.irq_enabled = *in++ != 0;
-    staged.delta_.enabled = *in++ != 0;
-    staged.delta_.stopped = *in++ != 0;
+    staged.delta_.buffered = read_bool();
+    staged.delta_.silent = read_bool();
+    staged.delta_.loop = read_bool();
+    staged.delta_.irq_enabled = read_bool();
+    staged.delta_.enabled = read_bool();
+    staged.delta_.stopped = read_bool();
     if (staged.delta_.rate > 15 || (staged.delta_.output & 0x80u) != 0 || staged.delta_.bits == 0 ||
         staged.delta_.bits > 8 || staged.delta_.period > 0x7FF || staged.delta_.countdown > 0x7FF)
         return false;
+
+    if (!valid_bools || in != buffer + size) return false;
 
     pulses_[0] = staged.pulses_[0];
     pulses_[1] = staged.pulses_[1];
