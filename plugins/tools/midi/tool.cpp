@@ -54,7 +54,7 @@ struct Tool {
     std::array<std::array<bool,128>,16> channel_notes{};
     std::deque<Bytes> live_queue;
     int channel=1, sustain_channel=0, velocity=100, bend=8192, modulation=0, volume=100, pan=64, expression=127, program=0;
-    bool sustain=false, playing=false, loop=false, piano_visible=false;
+    bool sustain=false, playing=false, loop=false, piano_visible=false, focus_file_player=false;
     bool playback_started=false, playback_ended=false;
     uint64_t origin=0, start_position=0, position=0, last_time=0;
     size_t event_index=0;
@@ -400,9 +400,12 @@ struct Tool {
                 if(ImGui::Button("Panic")) panic();
                 ImGui::EndTabItem();
             }
-            if(ImGui::BeginTabItem("MIDI File Player")) {
+            const auto file_player_flags=focus_file_player?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None;
+            const bool file_player_open=ImGui::BeginTabItem("MIDI File Player",nullptr,file_player_flags);
+            focus_file_player=false;
+            if(file_player_open) {
                 if(ImGui::Button("Open MIDI file") && !dialog && !loading.valid()) {
-                    const SrhToolFileFilter filter{"Standard MIDI File","mid;midi"};
+                    const SrhToolFileFilter filter{"Standard MIDI File","mid;midi;smf"};
                     host->file_dialog_request(host->context,0,&filter,1,&dialog);
                 }
                 if(!file_path.empty()) ImGui::TextDisabled("%s",file_path.c_str());
@@ -454,20 +457,41 @@ struct Tool {
         ImGui::End(); *open=visible;
     }
 };
+SrhStatus SRH_CALL open_project_midi(void *context,const char *path,const char *,uint64_t,uint64_t) {
+    return srz80::sdk::guard([&] {
+        if(!context || !path || !*path) return SRH_INVALID;
+        auto &tool=*static_cast<Tool *>(context);
+        tool.focus_file_player=true;
+        tool.load_file(path);
+        return SRH_OK;
+    });
+}
 SrhStatus SRH_CALL create(const SrhToolHostV1 *host,void **out) {
     return srz80::sdk::guard([&]() -> SrhStatus {
-        if(!srz80::sdk::valid(host) || !out || !host->input_submit || !host->input_cancel || !host->runtime_info) return SRH_INVALID;
+        if(!srz80::sdk::valid(host) || !out || !host->input_submit || !host->input_cancel ||
+           !host->runtime_info || !host->text_format_register || !host->text_format_unregister)
+            return SRH_INVALID;
         ImGui::SetCurrentContext(static_cast<ImGuiContext *>(host->imgui_context));
         ImGui::SetAllocatorFunctions(host->imgui_alloc,host->imgui_free,host->imgui_allocator_context);
         auto tool=std::make_unique<Tool>(host);
         std::array<char,1024> text{};
         if(host->config_get(host->context,"midi.input_port",text.data(),text.size())==SRH_OK) tool->input_port=text.data();
         if(host->config_get(host->context,"midi.output_port",text.data(),text.size())==SRH_OK) tool->output_port=text.data();
+        for(const char *extension:{"mid","midi","smf"}) {
+            SrhToolTextFormat format{SRH_INIT(SrhToolTextFormat),"midi",extension,
+                "Standard MIDI File",tool.get(),open_project_midi,SRH_TEXT_FORMAT_BINARY};
+            if(host->text_format_register(host->context,&format)!=SRH_OK) {
+                host->text_format_unregister(host->context,tool.get());
+                return SRH_ERROR;
+            }
+        }
         *out=tool.release(); return SRH_OK;
     });
 }
 void SRH_CALL destroy(void *p) {
     auto tool=std::unique_ptr<Tool>(static_cast<Tool *>(p));
+    if(tool && tool->host->text_format_unregister)
+        tool->host->text_format_unregister(tool->host->context,tool.get());
     tool->stop_playback(); tool->release_keys();
     while(!tool->live_queue.empty()) { tool->submit(tool->live,tool->live_queue.front(),UINT64_MAX); tool->live_queue.pop_front(); }
     for(auto client:{&tool->live,&tool->playback}) for(auto request:client->requests)
@@ -521,7 +545,8 @@ SrhStatus SRH_CALL state_load(void *p,const char *state) {
         return SRH_OK;
     });
 }
-const SrhToolPlugin api{SRH_INIT(SrhToolPlugin),"midi","MIDI",IMGUI_VERSION,create,destroy,draw,"I/O",0,state_get,state_load,nullptr,tick};
+const SrhToolPlugin api{SRH_INIT(SrhToolPlugin),"midi","MIDI",IMGUI_VERSION,create,destroy,draw,"I/O",
+    Srh_TOOL_PROJECT_STATE_TEXT,state_get,state_load,nullptr,tick};
 }
 extern "C" SRH_EXPORT const SrhToolPlugin *SRH_CALL srz80_tool_init(const SrhToolHostV1 *host) {
     return host && host->abi_version==SRH_ABI ? &api : nullptr;

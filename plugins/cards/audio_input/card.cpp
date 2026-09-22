@@ -1,5 +1,6 @@
 #include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -7,7 +8,6 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <nlohmann/json.hpp>
 
 namespace {
 constexpr uint32_t kRegisterCount = 16;
@@ -19,24 +19,20 @@ struct Settings { uint32_t sample_rate = 16'000, channel = 0; };
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!config || !srz80::sdk::has_field(config, &SrhConfig::config_json) ||
         !config->config_json) return true;
-    const auto json = nlohmann::json::parse(config->config_json,
-        config->config_json + config->config_json_size, nullptr, false);
-    if (!json.is_object()) return false;
-    for (auto it = json.begin(); it != json.end(); ++it)
-        if (it.key() != "sample_rate" && it.key() != "channel") return false;
-    if (json.contains("sample_rate")) {
-        if (!json["sample_rate"].is_number_unsigned()) return false;
-        const auto value = json["sample_rate"].get<uint64_t>();
-        if (value < 8'000 || value > 384'000) return false;
-        settings.sample_rate = static_cast<uint32_t>(value);
-    }
-    if (json.contains("channel")) {
-        if (!json["channel"].is_number_unsigned()) return false;
-        const auto value = json["channel"].get<uint64_t>();
-        if (value > 7) return false;
-        settings.channel = static_cast<uint32_t>(value);
-    }
-    return true;
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+        auto &value = *static_cast<Settings *>(opaque);
+        uint64_t number = 0;
+        if (!srz80::sdk::json::unsigned_value(token, number)) return false;
+        if (token.name == "sample_rate" && number >= 8'000 && number <= 384'000)
+            value.sample_rate = static_cast<uint32_t>(number);
+        else if (token.name == "channel" && number <= 7)
+            value.channel = static_cast<uint32_t>(number);
+        else return false;
+        return true;
+    };
+    return config->config_json_size <= SIZE_MAX &&
+           bool(srz80::sdk::json::object(
+               {config->config_json, size_t(config->config_json_size)}, visit, &settings));
 }
 
 struct Card {

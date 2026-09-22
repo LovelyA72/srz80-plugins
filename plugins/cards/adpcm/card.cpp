@@ -1,9 +1,9 @@
 #include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 #include "device.hpp"
 #include <cstring>
 #include <memory>
-#include <nlohmann/json.hpp>
 
 namespace {
 using srz80::adpcm::Device;
@@ -40,21 +40,24 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         std::string name = "ADPCM";
         uint32_t sample_rate = 44'100;
         if (srz80::sdk::has_field(config, &SrhConfig::config_json) && config->config_json) {
-            const auto json = nlohmann::json::parse(config->config_json, config->config_json + config->config_json_size,
-                                                   nullptr, false);
-            if (!json.is_object()) return SRH_INVALID;
-            for (auto it = json.begin(); it != json.end(); ++it)
-                if (it.key() != "stream_name" && it.key() != "sample_rate") return SRH_INVALID;
-            if (json.contains("stream_name")) {
-                if (!json["stream_name"].is_string()) return SRH_INVALID;
-                name = json["stream_name"].get<std::string>();
-            }
-            if (json.contains("sample_rate")) {
-                if (!json["sample_rate"].is_number_unsigned()) return SRH_INVALID;
-                const auto value = json["sample_rate"].get<uint64_t>();
-                if (value > UINT32_MAX) return SRH_INVALID;
-                sample_rate = static_cast<uint32_t>(value);
-            }
+            struct Settings { std::string *name; uint32_t *sample_rate; } settings{&name, &sample_rate};
+            const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+                auto &settings = *static_cast<Settings *>(opaque);
+                if (token.name == "stream_name")
+                    return token.type == srz80::sdk::json::Type::string &&
+                           bool(srz80::sdk::json::decode_string(token.value, *settings.name));
+                if (token.name == "sample_rate") {
+                    uint64_t value = 0;
+                    if (!srz80::sdk::json::unsigned_value(token, value) || value > UINT32_MAX) return false;
+                    *settings.sample_rate = static_cast<uint32_t>(value);
+                    return true;
+                }
+                return false;
+            };
+            if (config->config_json_size > SIZE_MAX ||
+                !srz80::sdk::json::object(
+                    {config->config_json, size_t(config->config_json_size)}, visit, &settings))
+                return SRH_INVALID;
         }
         if (name.empty() || name.size() > 256 || name.find('\0') != std::string::npos ||
             sample_rate < 8'000 || sample_rate > 192'000) return SRH_INVALID;

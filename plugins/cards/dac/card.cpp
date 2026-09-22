@@ -1,11 +1,11 @@
 #include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <string>
 
 namespace {
@@ -22,19 +22,48 @@ struct Settings {
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!config || !srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json)
         return true;
-    const auto json = nlohmann::json::parse(config->config_json,
-        config->config_json + config->config_json_size, nullptr, false);
-    if (!json.is_object()) return false;
-    for (auto it = json.begin(); it != json.end(); ++it)
-        if (it.key() != "stream_name" && it.key() != "sample_rate") return false;
-    if (json.contains("stream_name") && !json["stream_name"].is_string()) return false;
-    if (json.contains("sample_rate") && !json["sample_rate"].is_number_unsigned()) return false;
-    if (json.contains("stream_name")) settings.stream_name = json["stream_name"].get<std::string>();
-    if (json.contains("sample_rate")) {
-        const auto value = json["sample_rate"].get<uint64_t>();
-        if (value > UINT32_MAX) return false;
-        settings.sample_rate = static_cast<uint32_t>(value);
-    }
+    if (config->config_json_size > SIZE_MAX) return false;
+    struct Parse {
+        Settings *settings;
+        uint32_t depth = 0;
+        bool root = false;
+        bool stream_name = false;
+        bool sample_rate = false;
+    } parse{&settings};
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+        auto &p = *static_cast<Parse *>(opaque);
+        using Type = srz80::sdk::json::Type;
+        if (token.type == Type::object_begin) {
+            if (p.depth != 0 || p.root) return false;
+            p.root = true;
+            ++p.depth;
+            return true;
+        }
+        if (token.type == Type::object_end) {
+            if (p.depth != 1) return false;
+            --p.depth;
+            return true;
+        }
+        if (p.depth != 1) return false;
+        if (token.name == "stream_name") {
+            if (p.stream_name || token.type != Type::string) return false;
+            p.stream_name = true;
+            return bool(srz80::sdk::json::decode_string(token.value, p.settings->stream_name));
+        }
+        if (token.name == "sample_rate") {
+            if (p.sample_rate || token.type != Type::number) return false;
+            p.sample_rate = true;
+            uint64_t value = 0;
+            if (!srz80::sdk::json::unsigned_integer(token.value, value) || value > UINT32_MAX)
+                return false;
+            p.settings->sample_rate = static_cast<uint32_t>(value);
+            return true;
+        }
+        return false;
+    };
+    const auto result = srz80::sdk::json::walk(
+        {config->config_json, size_t(config->config_json_size)}, visit, &parse);
+    if (!result || !parse.root || parse.depth != 0) return false;
     return !settings.stream_name.empty() && settings.stream_name.size() <= 256 &&
            settings.stream_name.find('\0') == std::string::npos &&
            settings.sample_rate >= 8'000 && settings.sample_rate <= 192'000;

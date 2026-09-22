@@ -1,5 +1,6 @@
 #include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 
 #include "swp00.h"
 
@@ -11,8 +12,6 @@
 #include <span>
 #include <string>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 namespace {
 constexpr uint32_t port_count = 0x800;
@@ -27,24 +26,25 @@ struct Settings {
 };
 
 bool parse_settings(const SrhConfig *config, Settings &settings) {
-    try {
-        const bool has_json = srz80::sdk::has_field(config, &SrhConfig::config_json) && config->config_json;
-        auto json = has_json
-                        ? nlohmann::json::parse(config->config_json,
-                                                config->config_json + config->config_json_size)
-                        : nlohmann::json::object();
-        if (!json.is_object()) return false;
-        for (auto it = json.begin(); it != json.end(); ++it)
-            if (it.key() != "chip_clock_hz" && it.key() != "stream_name") return false;
-        if (json.contains("chip_clock_hz") && (!json["chip_clock_hz"].is_number_unsigned() ||
-            json["chip_clock_hz"].get<uint64_t>() > 50'000'000)) return false;
-        settings.chip_clock_hz = json.value("chip_clock_hz", settings.chip_clock_hz);
-        settings.stream_name = json.value("stream_name", settings.stream_name);
-        return settings.chip_clock_hz >= 1'000'000 && settings.chip_clock_hz <= 50'000'000 &&
-               !settings.stream_name.empty() && settings.stream_name.size() <= 256;
-    } catch (...) {
+    if (!srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json) return true;
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+        auto &value = *static_cast<Settings *>(opaque);
+        if (token.name == "chip_clock_hz") {
+            uint64_t number = 0;
+            if (!srz80::sdk::json::unsigned_value(token, number) || number > 50'000'000) return false;
+            value.chip_clock_hz = static_cast<uint32_t>(number);
+            return true;
+        }
+        if (token.name == "stream_name")
+            return token.type == srz80::sdk::json::Type::string &&
+                   bool(srz80::sdk::json::decode_string(token.value, value.stream_name));
         return false;
-    }
+    };
+    if (config->config_json_size > SIZE_MAX ||
+        !srz80::sdk::json::object({config->config_json, size_t(config->config_json_size)}, visit, &settings))
+        return false;
+    return settings.chip_clock_hz >= 1'000'000 && settings.chip_clock_hz <= 50'000'000 &&
+           !settings.stream_name.empty() && settings.stream_name.size() <= 256;
 }
 
 struct Card {

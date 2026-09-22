@@ -1,6 +1,6 @@
 #include <state.hpp>
 #include <boundary.hpp>
-#include <nlohmann/json.hpp>
+#include <json.hpp>
 
 #include "core.hpp"
 
@@ -17,7 +17,6 @@
    stream and reaches the machine for nothing else. */
 
 namespace {
-using Json = nlohmann::json;
 using vrc6::Core;
 
 constexpr uint32_t kDefaultClockHz = 1789773; /* NTSC CPU clock */
@@ -47,72 +46,49 @@ struct Settings {
                                             kDefaultChannelVolume};
 };
 
-bool read_unsigned(const Json &value, uint64_t &out) {
-    if (value.is_number_unsigned()) {
-        out = value.get<uint64_t>();
-        return true;
-    }
-    if (value.is_number_integer()) {
-        const auto number = value.get<int64_t>();
-        if (number < 0)
-            return false;
-        out = static_cast<uint64_t>(number);
-        return true;
-    }
-    if (!value.is_string())
-        return false;
-    const auto text = value.get<std::string>();
-    if (text.empty())
-        return false;
-    size_t position = 0;
-    try {
-        out = std::stoull(text, &position, 0);
-    } catch (...) {
-        return false;
-    }
-    return position == text.size();
-}
-
 /* Parses the card's configuration object.  Returns nullptr on success or a
    short reason for the first offending key. */
 const char *parse_settings(const SrhConfig *config, Settings &settings) {
     if (!srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json ||
         config->config_json_size == 0)
         return nullptr;
-    const auto json = Json::parse(config->config_json,
-                                  config->config_json + config->config_json_size, nullptr, false);
-    if (json.is_discarded() || !json.is_object())
-        return "config must be a JSON object";
-    for (const auto &[key, value] : json.items()) {
+    struct Parse { Settings *settings; const char *reason = nullptr; } parse{&settings};
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &value) noexcept {
+        auto &parse = *static_cast<Parse *>(opaque);
+        auto &settings = *parse.settings;
         uint64_t number = 0;
-        if (key == "chip_clock_hz") {
-            if (!read_unsigned(value, number) || number < 1000000 || number > 20000000)
-                return "chip_clock_hz must be 1000000..20000000";
+        if (value.name == "chip_clock_hz") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 1000000 || number > 20000000)
+                return parse.reason = "chip_clock_hz must be 1000000..20000000", false;
             settings.chip_clock_hz = static_cast<uint32_t>(number);
-        } else if (key == "sample_rate") {
-            if (!read_unsigned(value, number) || number < 8000 || number > 192000)
-                return "sample_rate must be 8000..192000";
+        } else if (value.name == "sample_rate") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 8000 || number > 192000)
+                return parse.reason = "sample_rate must be 8000..192000", false;
             settings.sample_rate = static_cast<uint32_t>(number);
-        } else if (key == "gain_milli") {
-            if (!read_unsigned(value, number) || number < 1 || number > 20000)
-                return "gain_milli must be 1..20000";
+        } else if (value.name == "gain_milli") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 1 || number > 20000)
+                return parse.reason = "gain_milli must be 1..20000", false;
             settings.gain_milli = static_cast<uint32_t>(number);
-        } else if (key == "stream_name") {
-            if (!value.is_string())
-                return "stream_name must be a string";
-            settings.stream_name = value.get<std::string>();
+        } else if (value.name == "stream_name") {
+            if (value.type != srz80::sdk::json::Type::string ||
+                !srz80::sdk::json::decode_string(value.value, settings.stream_name))
+                return parse.reason = "stream_name must be a string", false;
             if (settings.stream_name.empty() || settings.stream_name.size() > 256)
-                return "stream_name must be 1..256 characters";
-        } else if (key == "volume_pulse1" || key == "volume_pulse2" || key == "volume_saw") {
-            const uint32_t channel = key == "volume_pulse1" ? 0u : key == "volume_pulse2" ? 1u : 2u;
-            if (!read_unsigned(value, number) || number > 200)
-                return "channel volumes must be 0..200 percent";
+                return parse.reason = "stream_name must be 1..256 characters", false;
+        } else if (value.name == "volume_pulse1" || value.name == "volume_pulse2" || value.name == "volume_saw") {
+            const uint32_t channel = value.name == "volume_pulse1" ? 0u : value.name == "volume_pulse2" ? 1u : 2u;
+            if (!srz80::sdk::json::unsigned_value(value, number) || number > 200)
+                return parse.reason = "channel volumes must be 0..200 percent", false;
             settings.volume[channel] = static_cast<uint32_t>(number);
         } else {
-            return "unknown configuration key";
+            return parse.reason = "unknown configuration key", false;
         }
-    }
-    return nullptr;
+        return true;
+    };
+    if (config->config_json_size > SIZE_MAX) return "config is too large";
+    const auto result = srz80::sdk::json::object(
+        {config->config_json, size_t(config->config_json_size)}, visit, &parse);
+    return result ? nullptr : parse.reason ? parse.reason : "config must be a JSON object";
 }
 
 struct Card {

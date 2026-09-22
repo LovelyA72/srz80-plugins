@@ -40,6 +40,25 @@ FetchContent_Declare(json
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(json)
 
+FetchContent_Declare(frozen
+  URL https://github.com/cesanta/frozen/archive/refs/tags/1.7.tar.gz
+  URL_HASH SHA256=0d6b1a9778fde9793c0d7aa22ca872cfc549bc69d78ef93d6df21102a08e5e3c
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(frozen)
+
+add_library(srz80_json STATIC sdk/src/json.cpp "${frozen_SOURCE_DIR}/frozen.c")
+target_include_directories(srz80_json PRIVATE "${frozen_SOURCE_DIR}")
+target_link_libraries(srz80_json PUBLIC srz80_sdk)
+target_compile_definitions(srz80_json PRIVATE JSON_MINIMAL=1 JSON_MAX_DEPTH=32)
+target_compile_options(srz80_json PRIVATE -ffunction-sections -fdata-sections)
+if(UNIX AND NOT APPLE)
+  target_link_options(srz80_json INTERFACE -Wl,--gc-sections)
+endif()
+set_target_properties(srz80_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
+srz80_warnings(srz80_json)
+
+include(CTest)
+
 function(srz80_plugin name)
   cmake_parse_arguments(ARG "LINK_M;NO_WARNINGS" "KIND;OUTPUT"
     "SOURCES;LIBS;INCLUDES;DEFINITIONS" ${ARGN})

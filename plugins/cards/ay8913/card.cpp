@@ -1,6 +1,6 @@
 #include <state.hpp>
 #include <boundary.hpp>
-#include <nlohmann/json.hpp>
+#include <json.hpp>
 
 #include "ay8913.hpp"
 
@@ -13,8 +13,6 @@
 #include <string>
 
 namespace {
-using Json = nlohmann::json;
-
 constexpr uint32_t kDefaultClockHz = 1789773; // 1.7897725 MHz (MSX PSG clock)
 constexpr uint32_t kDefaultSampleRate = 44100;
 // The core's sample() sums three legacy-normalized channels, each in
@@ -29,65 +27,39 @@ struct Settings {
     std::string stream_name = "AY-3-8913";
 };
 
-bool read_unsigned(const Json &value, uint64_t &out) {
-    if (value.is_number_unsigned()) {
-        out = value.get<uint64_t>();
-        return true;
-    }
-    if (value.is_number_integer()) {
-        const auto number = value.get<int64_t>();
-        if (number < 0)
-            return false;
-        out = static_cast<uint64_t>(number);
-        return true;
-    }
-    if (!value.is_string())
-        return false;
-    const auto text = value.get<std::string>();
-    if (text.empty())
-        return false;
-    size_t position = 0;
-    try {
-        out = std::stoull(text, &position, 0);
-    } catch (...) {
-        return false;
-    }
-    return position == text.size();
-}
-
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json ||
         config->config_json_size == 0)
         return true;
-    const auto json = Json::parse(config->config_json,
-                                  config->config_json + config->config_json_size, nullptr, false);
-    if (json.is_discarded() || !json.is_object())
-        return false;
-    for (const auto &[key, value] : json.items()) {
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &value) noexcept {
+        auto &settings = *static_cast<Settings *>(opaque);
         uint64_t number = 0;
-        if (key == "chip_clock_hz") {
-            if (!read_unsigned(value, number) || number < 1000000 || number > 20000000)
+        if (value.name == "chip_clock_hz") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 1000000 || number > 20000000)
                 return false;
             settings.chip_clock_hz = static_cast<uint32_t>(number);
-        } else if (key == "sample_rate") {
-            if (!read_unsigned(value, number) || number < 8000 || number > 192000)
+        } else if (value.name == "sample_rate") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 8000 || number > 192000)
                 return false;
             settings.sample_rate = static_cast<uint32_t>(number);
-        } else if (key == "data_first") {
-            if (!value.is_boolean())
+        } else if (value.name == "data_first") {
+            if (value.type != srz80::sdk::json::Type::boolean)
                 return false;
-            settings.data_first = value.get<bool>();
-        } else if (key == "stream_name") {
-            if (!value.is_string())
+            settings.data_first = value.boolean;
+        } else if (value.name == "stream_name") {
+            if (value.type != srz80::sdk::json::Type::string ||
+                !srz80::sdk::json::decode_string(value.value, settings.stream_name))
                 return false;
-            settings.stream_name = value.get<std::string>();
             if (settings.stream_name.empty() || settings.stream_name.size() > 256)
                 return false;
         } else {
             return false;
         }
-    }
-    return true;
+        return true;
+    };
+    return config->config_json_size <= SIZE_MAX &&
+           bool(srz80::sdk::json::object(
+               {config->config_json, size_t(config->config_json_size)}, visit, &settings));
 }
 
 struct Card {

@@ -21,6 +21,12 @@ enum SrhToolFlags {
     Srh_TOOL_PROJECT_STATE_TEXT = 1u << 1,
 };
 
+/* SrhToolTextFormat capability: the registered file is opaque binary data
+   interpreted only by the registering tool. */
+enum SrhToolTextFormatFlags {
+    SRH_TEXT_FORMAT_BINARY = 1u << 0,
+};
+
 typedef struct SrhToolSpace {
     SRH_HEADER;
     SrhHandle id;
@@ -48,6 +54,8 @@ typedef struct SrhToolTextFormat {
     const char *label;
     void *handler_context;
     SrhToolProjectFileOpen open;
+    /* Appended in SRH_ABI 1 (tail field, guarded by struct_size). */
+    uint32_t flags;
 } SrhToolTextFormat;
 
 /* Active card description returned by the optional card-inspection service. */
