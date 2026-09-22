@@ -357,7 +357,36 @@ typedef void (*riscv_on_ebreak)(riscv_t *rv);
 typedef void (*riscv_on_memset)(riscv_t *rv);
 typedef void (*riscv_on_memcpy)(riscv_t *rv);
 typedef void (*riscv_on_trap)(riscv_t *rv);
-/* RISC-V emulator I/O interface */
+
+/* Architectural state for a bare-metal hart. The embedder serializes these
+ * fixed-width fields; emulator caches and host callbacks are never included. */
+typedef struct {
+    riscv_word_t pc;
+    riscv_word_t registers[N_RV_REGS];
+#if RV32_HAS(EXT_V)
+    uint32_t vector_registers[N_RV_REGS][VLEN / 32];
+    uint32_t vcsr, vl, vtype, vstart, vxsat, vxrm, csr_vlenb;
+#endif
+#if RV32_HAS(EXT_F)
+    riscv_word_t floating_registers[N_RV_REGS];
+    uint32_t fcsr;
+#endif
+    uint64_t timer;
+    uint64_t cycle;
+    uint32_t time[2];
+    uint32_t mstatus, mtvec, misa, mtval, mcause, mscratch, mepc, mip, mie;
+    uint32_t mideleg, medeleg, mvendorid, marchid, mimpid, mbadaddr;
+    uint32_t sstatus, stvec, sip, sie, scounteren, sscratch, sepc, scause, stval, satp;
+#if RV32_HAS(SYSTEM)
+    uint32_t last_csr_sepc;
+    uint64_t timer_offset;
+    uint8_t is_trapped;
+#endif
+    uint32_t privilege_mode;
+    uint8_t compressed;
+    uint8_t halted;
+} riscv_bare_state_t;
+
 typedef struct {
     /* memory read interface */
     riscv_mem_ifetch mem_ifetch;
@@ -413,6 +442,8 @@ uint64_t rv_bare_jit_instructions(const riscv_t *);
 uint64_t rv_bare_jit_native_blocks(const riscv_t *);
 #endif
 bool rv_reset_bare(riscv_t *rv, riscv_word_t pc);
+bool rv_save_bare_state(const riscv_t *rv, riscv_bare_state_t *state);
+bool rv_load_bare_state(riscv_t *rv, const riscv_bare_state_t *state);
 
 /* Return the embedder context supplied to rv_create_bare(). */
 riscv_user_t rv_get_user(riscv_t *rv);
