@@ -46,7 +46,8 @@ FetchContent_Declare(frozen
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(frozen)
 
-add_library(srz80_json STATIC sdk/src/json.cpp "${frozen_SOURCE_DIR}/frozen.c")
+add_library(srz80_json STATIC
+  sdk/src/json.cpp sdk/src/frozen_bridge.c "${frozen_SOURCE_DIR}/frozen.c")
 target_include_directories(srz80_json PRIVATE "${frozen_SOURCE_DIR}")
 target_link_libraries(srz80_json PUBLIC srz80_sdk)
 target_compile_definitions(srz80_json PRIVATE JSON_MINIMAL=1 JSON_MAX_DEPTH=32)

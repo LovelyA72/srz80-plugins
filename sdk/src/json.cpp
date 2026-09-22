@@ -1,6 +1,6 @@
 #include <json.hpp>
 
-#include <frozen.h>
+#include "frozen_bridge.h"
 
 #include <charconv>
 #include <climits>
@@ -19,36 +19,36 @@ struct WalkContext {
     bool strict = true;
 };
 
-Type type_of(json_token_type type) {
+Type type_of(SrzFrozenTokenType type) {
     switch (type) {
-    case JSON_TYPE_STRING: return Type::string;
-    case JSON_TYPE_NUMBER: return Type::number;
-    case JSON_TYPE_TRUE:
-    case JSON_TYPE_FALSE: return Type::boolean;
-    case JSON_TYPE_NULL: return Type::null;
-    case JSON_TYPE_OBJECT_START: return Type::object_begin;
-    case JSON_TYPE_OBJECT_END: return Type::object_end;
-    case JSON_TYPE_ARRAY_START: return Type::array_begin;
-    case JSON_TYPE_ARRAY_END: return Type::array_end;
+    case SRZ_FROZEN_STRING: return Type::string;
+    case SRZ_FROZEN_NUMBER: return Type::number;
+    case SRZ_FROZEN_TRUE:
+    case SRZ_FROZEN_FALSE: return Type::boolean;
+    case SRZ_FROZEN_NULL: return Type::null;
+    case SRZ_FROZEN_OBJECT_START: return Type::object_begin;
+    case SRZ_FROZEN_OBJECT_END: return Type::object_end;
+    case SRZ_FROZEN_ARRAY_START: return Type::array_begin;
+    case SRZ_FROZEN_ARRAY_END: return Type::array_end;
     default: return Type::null;
     }
 }
 
-void visit_token(void *opaque, const char *name, size_t name_size, const char *,
-                 const json_token *raw) {
+void visit_token(void *opaque, const char *name, size_t name_size, const char *value,
+                 int value_size, SrzFrozenTokenType type) {
     auto &state = *static_cast<WalkContext *>(opaque);
-    if (!state.accepted || !raw) return;
+    if (!state.accepted) return;
     // Frozen deliberately accepts identifier-style object keys. The SDK contract is strict JSON.
     if (name && name >= state.input_begin && name < state.input_end &&
         (name == state.input_begin || name[-1] != '"')) {
         state.strict = false;
         return;
     }
-    Token token{type_of(raw->type),
+    Token token{type_of(type),
                 name ? std::string_view(name, name_size) : std::string_view{},
-                raw->ptr && raw->len >= 0 ? std::string_view(raw->ptr, size_t(raw->len))
-                                          : std::string_view{},
-                raw->type == JSON_TYPE_TRUE};
+                value && value_size >= 0 ? std::string_view(value, size_t(value_size))
+                                         : std::string_view{},
+                type == SRZ_FROZEN_TRUE};
     state.accepted = state.visit(state.context, token);
 }
 
@@ -93,15 +93,12 @@ Result walk(std::string_view input, Visit visit, void *context, uint32_t max_dep
     if (!visit || input.size() > size_t(INT_MAX) || max_depth == 0 || max_depth > INT_MAX)
         return {input.size() > size_t(INT_MAX) ? Error::too_large : Error::invalid, 0};
     WalkContext state{visit, context, input.data(), input.data() + input.size()};
-    frozen_args args{};
-    args.callback = visit_token;
-    args.callback_data = &state;
-    args.limit = int(max_depth);
-    const int consumed = json_walk_args(input.data(), int(input.size()), &args);
+    const int consumed = srz_frozen_walk(input.data(), int(input.size()), int(max_depth),
+                                         visit_token, &state);
     if (!state.strict) return {Error::invalid, consumed > 0 ? size_t(consumed) : 0};
     if (!state.accepted) return {Error::rejected, consumed > 0 ? size_t(consumed) : 0};
-    if (consumed == JSON_DEPTH_LIMIT) return {Error::too_deep, 0};
-    if (consumed == JSON_STRING_INCOMPLETE) return {Error::incomplete, 0};
+    if (consumed == SRZ_FROZEN_DEPTH_LIMIT) return {Error::too_deep, 0};
+    if (consumed == SRZ_FROZEN_STRING_INCOMPLETE) return {Error::incomplete, 0};
     if (consumed < 0 || size_t(consumed) != input.size())
         return {Error::invalid, consumed > 0 ? size_t(consumed) : 0};
     return {};
