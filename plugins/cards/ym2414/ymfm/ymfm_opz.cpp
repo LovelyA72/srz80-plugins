@@ -759,4 +759,10 @@ void ym2414::generate(output_data *output, uint32_t numsamples)
 	}
 }
 
+int32_t ym2414::debug_operator_output(uint32_t index)
+{
+	auto *oper = m_fm.debug_operator(index);
+	return oper->compute_volume(oper->phase(), m_fm.regs().lfo_am_offset(oper->choffs()));
+}
+
 }

@@ -340,6 +340,7 @@ public:
 
 	// generate one sample of sound
 	void generate(output_data *output, uint32_t numsamples = 1);
+	int32_t debug_operator_output(uint32_t index);
 
   // get the engine
   fm_engine* debug_engine() { return &m_fm; }

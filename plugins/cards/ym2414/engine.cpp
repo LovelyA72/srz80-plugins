@@ -157,9 +157,7 @@ uint32_t Engine::operator_state(uint32_t op) {
 int32_t Engine::operator_output(uint32_t op) {
     if (impl_->backend == Backend::srz80)
         return impl_->core->operator_output(op);
-    auto *engine = impl_->ymfm->debug_engine();
-    auto *oper = engine->debug_operator(op);
-    return oper->compute_volume(oper->phase(), engine->regs().lfo_am_offset(oper->choffs()));
+    return impl_->ymfm->debug_operator_output(op);
 }
 
 uint32_t Engine::operator_phase(uint32_t op) {
