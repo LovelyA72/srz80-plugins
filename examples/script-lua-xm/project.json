@@ -51,7 +51,7 @@
         "muted": false,
         "name": "XM left",
         "ordinal": 0,
-        "pan": -100,
+        "pan": -41,
         "volume": 100
       },
       {
@@ -59,7 +59,7 @@
         "muted": false,
         "name": "XM right",
         "ordinal": 0,
-        "pan": 100,
+        "pan": 40,
         "volume": 100
       }
     ]
