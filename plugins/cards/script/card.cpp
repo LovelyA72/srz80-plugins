@@ -120,15 +120,17 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
         backend = Backend::lua;
     else if (ext == ".js")
         backend = Backend::javascript;
+    else if (ext == ".rb")
+        backend = Backend::mruby;
 #ifdef SRZ80_SCRIPT_PHP
     else if (ext == ".php")
         backend = Backend::php;
 #endif
     else {
 #ifdef SRZ80_SCRIPT_PHP
-        error = "Unsupported main script extension (choose .lua, .js or .php)";
+        error = "Unsupported main script extension (choose .lua, .js, .rb or .php)";
 #else
-        error = "Unsupported main script extension (choose .lua or .js)";
+        error = "Unsupported main script extension (choose .lua, .js or .rb)";
 #endif
         return {};
     }
@@ -156,6 +158,8 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
         candidate = std::make_unique<LuaVm>(*this, normalized);
     else if (backend == Backend::javascript)
         candidate = std::make_unique<JsVm>(*this, normalized);
+    else if (backend == Backend::mruby)
+        candidate = std::make_unique<MrubyVm>(*this, normalized);
 #ifdef SRZ80_SCRIPT_PHP
     else
         candidate = make_php_vm(*this, normalized);
@@ -494,9 +498,9 @@ SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *property) 
                  "main_file",
                  "Script",
 #ifdef SRZ80_SCRIPT_PHP
-                 "Project main source (.lua, .js or .php)",
+                 "Project main source (.lua, .js, .rb or .php)",
 #else
-                 "Project main source (.lua or .js)",
+                 "Project main source (.lua, .js or .rb)",
 #endif
                  SRH_TEXT,
                  0,

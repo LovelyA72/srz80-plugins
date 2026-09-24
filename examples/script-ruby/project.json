@@ -1,0 +1,40 @@
+{
+  "cards": [
+    {
+      "base": 16,
+      "config": {
+        "main_file": "main.rb"
+      },
+      "name": "Ruby counter",
+      "plugin": "script",
+      "size": 1,
+      "space": "demo.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Ruby script exposes a timer-driven counter as an I/O byte.",
+    "title": "Ruby script demo"
+  },
+  "name": "Ruby script demo",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFF",
+      "name": "demo.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
