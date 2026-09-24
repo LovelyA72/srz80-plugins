@@ -120,8 +120,16 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
         backend = Backend::lua;
     else if (ext == ".js")
         backend = Backend::javascript;
+#ifdef SRZ80_SCRIPT_PHP
+    else if (ext == ".php")
+        backend = Backend::php;
+#endif
     else {
+#ifdef SRZ80_SCRIPT_PHP
+        error = "Unsupported main script extension (choose .lua, .js or .php)";
+#else
         error = "Unsupported main script extension (choose .lua or .js)";
+#endif
         return {};
     }
     const fs::path relative = selected.lexically_relative(project_root);
@@ -146,8 +154,12 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
     std::unique_ptr<ScriptVm> candidate;
     if (backend == Backend::lua)
         candidate = std::make_unique<LuaVm>(*this, normalized);
-    else
+    else if (backend == Backend::javascript)
         candidate = std::make_unique<JsVm>(*this, normalized);
+#ifdef SRZ80_SCRIPT_PHP
+    else
+        candidate = make_php_vm(*this, normalized);
+#endif
     // Seed the source cache so the main file is counted once and module loaders
     // can resolve relative imports against the normalized project path.
     const char *source_bytes = bytes.empty() ? "" : reinterpret_cast<const char *>(bytes.data());
@@ -481,7 +493,11 @@ SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *property) 
     *property = {SRH_INIT(SrhProperty),
                  "main_file",
                  "Script",
+#ifdef SRZ80_SCRIPT_PHP
+                 "Project main source (.lua, .js or .php)",
+#else
                  "Project main source (.lua or .js)",
+#endif
                  SRH_TEXT,
                  0,
                  0,
@@ -594,7 +610,11 @@ const SrhCardDescriptor descriptor{
     SRH_INIT(SrhCardDescriptor),
     "Automation",
     "Script",
+#ifdef SRZ80_SCRIPT_PHP
+    "Run a Lua, JavaScript or PHP project script (PHP experimental)",
+#else
     "Run a Lua 5.5 or QuickJS-NG project script",
+#endif
     0xF000,
     256,
     0,

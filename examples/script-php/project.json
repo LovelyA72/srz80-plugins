@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "name": "PHP script demo",
+  "metadata": {
+    "title": "PHP script demo",
+    "description": "A PHP script card computes a sine wave byte using a setting parsed with PCRE."
+  },
+  "spaces": [{"name": "demo.io", "maximum": "0xFFFF", "unclaimed": 255}],
+  "cards": [{
+    "plugin": "script",
+    "name": "PHP script",
+    "space": "demo.io",
+    "base": 61440,
+    "size": 1,
+    "priority": 0,
+    "config": {"main_file": "main.php"}
+  }],
+  "clocks": [0,0,0],
+  "epoch_ns": 0,
+  "seed": 1,
+  "time_mode": "project"
+}

@@ -46,6 +46,10 @@ SrhStatus ScriptVm::timer_fired(TimerContext *context) {
 uint64_t ScriptVm::register_timer(uint64_t delay, int function_index,
                                   JSValueConst js_function) {
     const uint64_t id = retain_callback(function_index, js_function);
+    return register_retained_timer(delay, id);
+}
+
+uint64_t ScriptVm::register_retained_timer(uint64_t delay, uint64_t id) {
     if (!id)
         return 0;
     TimerEntry entry;
@@ -73,12 +77,18 @@ uint64_t ScriptVm::register_timer(uint64_t delay, int function_index,
 
 bool ScriptVm::register_signal(std::string_view name, int function_index, std::string &error,
                                JSValueConst js_function) {
+    const uint64_t id = retain_callback(function_index, js_function);
+    return register_retained_signal(name, id, error);
+}
+
+bool ScriptVm::register_retained_signal(std::string_view name, uint64_t id, std::string &error) {
     SrhHandle signal = 0;
     if (!card.lookup_signal(name, signal)) {
+        if (id)
+            release_function(id);
         error = "Signal not found: " + std::string(name);
         return false;
     }
-    const uint64_t id = retain_callback(function_index, js_function);
     if (!id) {
         error = "Expected a signal callback function";
         return false;

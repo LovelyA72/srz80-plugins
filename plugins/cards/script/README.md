@@ -1,7 +1,8 @@
 # Script card
 
 The card runs one project source file in a per-card Lua 5.5.1 or QuickJS-NG
-0.15.1 runtime. The host picker stores `main_file` relative to the active
+0.15.1 runtime, or optionally the experimental PHP backend below.
+The host picker stores `main_file` relative to the active
 project when the file is inside it. The card also accepts an absolute path
 inside that project, resolves it to a project-relative name and loads it through
 `host.project_files.v1`. Includes and the `project.read` / `project.write` APIs
@@ -55,5 +56,122 @@ VM internals, loaded module caches, subscriptions, and pending timers are not
 serialized. Timers are canceled when the card is removed, the main file is
 changed, or a new run replaces the VM. Completed one-shot timers are released.
 
-The vendored runtime sources are pinned in `vendor/UPSTREAM.md`; their license
-notices are included beside the sources.
+Lua and QuickJS versions and archive hashes are pinned in `CMakeLists.txt`.
+If the local `vendor/` directory is absent, CMake fetches those releases into
+the build tree. Their license notices are included with their sources.
+
+## Experimental PHP backend
+
+This optional backend embeds upstream PHP 8.4.25 with PCRE2, without a PHP
+executable or server. It is optional and currently requires native 64-bit
+Linux/glibc. `SRZ80_SCRIPT_PHP` defaults to `OFF`; ordinary builds neither
+download nor compile PHP. The embedding approach was informed by `php-esp32`; its ESP-IDF
+platform configuration and device stubs are not used here.
+
+```sh
+cmake --preset gcc-debug -DSRZ80_SCRIPT_PHP=ON -DBUILD_TESTING=ON
+cmake --build build/gcc-debug --target plugin_script script_php_runtime_test --parallel 4
+ctest --test-dir build/gcc-debug -R '^script_php_runtime$' --output-on-failure
+```
+
+The first build downloads and verifies the PHP source, then configures and
+builds a minimal embed SAPI. GCC, GNU make and the normal PHP configure tools
+are required. No system PHP installation is needed. For an offline PHP build,
+set `-DSRZ80_PHP_ARCHIVE=/absolute/path/php-8.4.25.tar.gz`; the same SHA256 is
+checked for local archives.
+
+Keep this layout when copying the plugin into a host installation:
+
+```text
+plugins/libmisc_script.so
+plugins/php/libscript_php_bridge.so
+plugins/php/libphp.so
+plugins/php/PHP-LICENSE
+plugins/php/ZEND-LICENSE
+plugins/php/PCRE2-LICENSE
+```
+
+Select a project-relative `.php` file as `main_file`, or open
+[`examples/script-php`](../../../examples/script-php). Source files use the
+normal `<?php` opening tag. The same `on_reset`, `on_read` and `on_write` hooks
+work, with PHP parameters such as `function on_write(int $address, int $value)`.
+`echo` and `card_log()` send output to the host log.
+
+The host bindings accept positional or named PHP arguments:
+
+```text
+card_log(message)
+card_read(space_name, address) -> byte
+card_write(space_name, address, value)
+card_time_ns() -> simulated nanoseconds
+card_signal_read(name) -> millivolts
+card_signal_drive(name, millivolts, strength)
+card_on_signal(name, callback) -> callback id
+card_after(delay_ns, callback) -> timer id
+project_read(relative_path) -> binary string
+project_write(relative_path, bytes)
+```
+
+The bridge uses explicit function and class **allowlists** in
+[`php/php_bridge.c`](php/php_bridge.c). It retains standard math, `preg_*`, and
+selected string, array, type and JSON functions, plus the host bindings.
+Functions absent from the allowlist are removed before compiling user code;
+non-allowlisted built-in classes are disabled. File, process, environment,
+network, native-module and INI-changing functions are unavailable, including
+indirect calls. `include`, `require`, `eval` and `exit` are also unavailable in
+this first version. File data goes exclusively through the project helper.
+
+PHP engines use isolated linker namespaces (`dlmopen`) in a bounded pool of
+8 slots. Each script gets a fresh PHP request with independent globals,
+functions and classes. Reload candidates coexist with the previous request;
+failed reloads keep the previous script. Idle engines are reused, avoiding
+static TLS exhaustion from repeatedly loading and unloading libc. Engine
+libraries remain loaded for the pool's lifetime; request memory and callbacks
+are released between uses. An engine whose cleanup fails is quarantined.
+
+Leave a slot available for reloads: at most 7 simultaneous PHP cards can reload
+with this pool. Other loaded libraries can lower the available glibc TLS
+capacity; allocation failures are reported without replacing the old script.
+Calls to each card must be serialized by the host, as with the other script
+backends. Sequential thread changes and synchronous cross-card callbacks are
+supported. This backend currently requires native 64-bit Linux/glibc.
+
+Install the plugin and its adjacent `php/` directory together. The bridge ABI
+is checked before starting PHP; mismatched versions report a clear load error.
+Restart the host after replacing these libraries, including when upgrading
+from the original implementation that exhausted TLS after repeated reloads.
+
+Timer callbacks receive simulated time in nanoseconds; signal callbacks receive
+`(name, millivolts)`. Both callbacks run synchronously on the calling host thread.
+
+Each outer callback has a 10-million-opcode budget shared with reentrant calls.
+PHP request allocations have a 64 MiB limit and Zend's native stack guard is
+set to 1 MiB. PCRE JIT is disabled; matching has a 100,000-work limit, depth
+limit of 1,000, and 1 MiB match-heap limit. These are not a process-wide memory
+cap or a wall-clock deadline for every native builtin. A fatal error retires
+that VM until reset/reload; ordinary exceptions are reported to the host.
+Recurring work should schedule its next callback with `card_after()` and return
+so that simulation time and other cards can advance. Timers may recur forever;
+the opcode budget resets for each outer callback.
+
+Snapshots use global `$state`, initially an empty `stdClass`. Use `stdClass`
+objects for maps and ordinary sequential PHP arrays for lists:
+
+```php
+$state = (object) ['value' => 0, 'samples' => [], 'settings' => (object) []];
+function on_read(int $address): int {
+    global $state;
+    return $state->value;
+}
+```
+
+Associative PHP arrays, custom objects, closures, cycles and non-JSON values
+are rejected on save; this avoids silently changing PHP value types during
+JSON round trips. Snapshot size is limited to 1 MiB and nesting to 64 levels.
+Timers and subscriptions are not serialized, matching the existing backends.
+
+This is not a fully stripped PHP distribution
+or an audited sandbox. Optional extensions and JIT are disabled at build time,
+but unused file/network implementations inside PHP's mandatory standard/core
+code are still present in `libphp.so`; scripts cannot access their normal
+entry points. Removing those implementations is a separate build-trimming step.

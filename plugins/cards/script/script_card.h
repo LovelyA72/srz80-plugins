@@ -51,7 +51,7 @@ constexpr uint64_t kQuickJsInterruptLimit = 1000;
 constexpr uint32_t kQuickJsInterruptQuantum = 10'000;
 constexpr size_t kCallbackDepthLimit = 64;
 
-enum class Backend { lua, javascript };
+enum class Backend { lua, javascript, php };
 struct ScriptCard;
 struct ScriptVm;
 
@@ -150,10 +150,9 @@ struct ScriptVm {
                                  std::string &error) = 0;
     virtual bool save_user_state(std::string &state, std::string &error) = 0;
     virtual bool load_user_state(std::string_view state, std::string &error) = 0;
-    // Each backend interprets exactly one of the two arguments according to
-    // its own calling convention (Lua uses the stack index, JavaScript the
-    // JSValue). New backends only override these two, never the shared
-    // registration path in register_timer/register_signal.
+    // Lua uses the stack index and JavaScript the JSValue. Backends retaining
+    // callbacks outside this translation unit can pass their opaque IDs to
+    // register_retained_timer/signal instead; all share the host registration.
     virtual uint64_t retain_callback(int function_index, JSValueConst js_function) = 0;
     virtual void release_function(uint64_t id) = 0;
 
@@ -193,8 +192,10 @@ struct ScriptVm {
     }
     uint64_t register_timer(uint64_t delay, int function_index,
                             JSValueConst js_function = JS_UNDEFINED);
+    uint64_t register_retained_timer(uint64_t delay, uint64_t id);
     bool register_signal(std::string_view name, int function_index, std::string &error,
                          JSValueConst js_function = JS_UNDEFINED);
+    bool register_retained_signal(std::string_view name, uint64_t id, std::string &error);
     bool activate(std::string &error);
     void deactivate();
     SrhStatus timer_fired(TimerContext *context);
@@ -292,6 +293,10 @@ struct JsVm final : ScriptVm {
     static JSValue api_project_read(JSContext *, JSValueConst, int, JSValueConst *);
     static JSValue api_project_write(JSContext *, JSValueConst, int, JSValueConst *);
 };
+
+#ifdef SRZ80_SCRIPT_PHP
+std::unique_ptr<ScriptVm> make_php_vm(ScriptCard &card, std::string path);
+#endif
 
 struct CallbackScope {
     size_t &depth;
