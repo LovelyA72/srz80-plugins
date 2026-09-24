@@ -1,0 +1,120 @@
+{
+  "cards": [
+    {
+      "base": 16,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "Channel 1"
+      },
+      "name": "Channel 1",
+      "plugin": "dac",
+      "size": 5,
+      "space": "mod.io"
+    },
+    {
+      "base": 32,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "Channel 2"
+      },
+      "name": "Channel 2",
+      "plugin": "dac",
+      "size": 5,
+      "space": "mod.io"
+    },
+    {
+      "base": 48,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "Channel 3"
+      },
+      "name": "Channel 3",
+      "plugin": "dac",
+      "size": 5,
+      "space": "mod.io"
+    },
+    {
+      "base": 64,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "Channel 4"
+      },
+      "name": "Channel 4",
+      "plugin": "dac",
+      "size": 5,
+      "space": "mod.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "mod_player.lua"
+      },
+      "plugin": "script",
+      "size": 1,
+      "space": "mod.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Lua script plays a ProTracker MOD through four PCM DACs.",
+    "title": "Four-channel MOD player"
+  },
+  "mixer": {
+    "master_volume": 100,
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "Channel 1",
+        "ordinal": 0,
+        "pan": -40,
+        "volume": 150
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "Channel 2",
+        "ordinal": 0,
+        "pan": 40,
+        "volume": 150
+      },
+      {
+        "card": 2,
+        "muted": false,
+        "name": "Channel 3",
+        "ordinal": 0,
+        "pan": 40,
+        "volume": 150
+      },
+      {
+        "card": 3,
+        "muted": false,
+        "name": "Channel 4",
+        "ordinal": 0,
+        "pan": -40,
+        "volume": 150
+      }
+    ]
+  },
+  "name": "Lua MOD player",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFF",
+      "name": "mod.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
