@@ -2,6 +2,7 @@
 #include <boundary.hpp>
 #include <nlohmann/json.hpp>
 #include <srz80/providers.h>
+#include <srz80/input.h>
 #include <srz80/signals.h>
 
 #include <array>
@@ -96,7 +97,7 @@ struct Keyboard {
         return SRH_OK;
     }
     std::string snapshot() const {
-        return Json{{"schema", 1}, {"endpoint", endpoint}, {"rx_fill", rx.size()},
+        return Json{{"schema", 1}, {"keyboard", {{"endpoint", endpoint}}}, {"rx_fill", rx.size()},
                     {"rx_capacity", rx_capacity}, {"overflow", bool(errors & 2)},
                     {"irq_enabled", bool(control & 1)}, {"irq_pending", pending()},
                     {"held_count", [&] { uint32_t n = 0; for (uint8_t b : held) for (; b; b &= uint8_t(b - 1)) ++n; return n; }()}}
@@ -153,7 +154,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         if ((status = host->map(host->context, owner, &map, &mapping)) != SRH_OK) return status;
         SrhDataProviderV1 provider{SRH_INIT(SrhDataProviderV1), keyboard.get(), snapshot,
             [](void *, uint32_t, uint64_t, const char *, uint64_t) -> SrhStatus { return SRH_UNAVAILABLE; }, {}, {}, 0};
-        std::strcpy(provider.name, "Keyboard"); std::strcpy(provider.protocol, "srz80.keyboard.v1");
+        std::strcpy(provider.name, "Keyboard"); std::strcpy(provider.protocol, SRH_INPUT_PROTOCOL);
         if ((status = keyboard->providers->register_provider(keyboard->providers->context, owner, &provider)) != SRH_OK) return status;
         *out = keyboard.release(); return SRH_OK;
     });

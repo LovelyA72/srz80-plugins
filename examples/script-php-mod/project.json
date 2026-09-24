@@ -107,6 +107,12 @@
     ]
   },
   "name": "PHP ProTracker player",
+  "rack_info": {
+    "author": "",
+    "notes": "",
+    "thumbnail": "",
+    "version": ""
+  },
   "seed": 1,
   "spaces": [
     {
