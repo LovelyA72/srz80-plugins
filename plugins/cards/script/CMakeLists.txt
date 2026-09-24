@@ -1,6 +1,7 @@
 set(SCRIPT_VENDOR "${CMAKE_CURRENT_LIST_DIR}/vendor")
 set(SCRIPT_LUA_SOURCE "${SCRIPT_VENDOR}/lua")
 set(SCRIPT_JS_SOURCE "${SCRIPT_VENDOR}/quickjs")
+set(SCRIPT_MRUBY_SOURCE "${SCRIPT_VENDOR}/mruby")
 # Some checkouts omit the ignored vendor directory. Fetch the same pinned
 # releases in that case, without adding either runtime's standalone programs.
 if(NOT EXISTS "${SCRIPT_LUA_SOURCE}/lua.h")
@@ -14,6 +15,49 @@ if(NOT EXISTS "${SCRIPT_LUA_SOURCE}/lua.h")
   endif()
   set(SCRIPT_LUA_SOURCE "${script_lua_SOURCE_DIR}/src")
 endif()
+if(NOT EXISTS "${SCRIPT_MRUBY_SOURCE}/include/mruby.h")
+  FetchContent_Declare(script_mruby
+    URL https://github.com/mruby/mruby/archive/refs/tags/4.0.0.tar.gz
+    URL_HASH SHA256=e2ea271dbed14e9f2b33df773ae447b747dbc242ce2675022c0a57efea85a7b4
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_GetProperties(script_mruby)
+  if(NOT script_mruby_POPULATED)
+    FetchContent_Populate(script_mruby)
+  endif()
+  set(SCRIPT_MRUBY_SOURCE "${script_mruby_SOURCE_DIR}")
+endif()
+
+find_program(SCRIPT_RAKE_EXECUTABLE NAMES rake rake.bat REQUIRED)
+set(SCRIPT_MRUBY_BUILD "${CMAKE_CURRENT_BINARY_DIR}/mruby-build")
+if(CMAKE_CROSSCOMPILING AND WIN32)
+  set(SCRIPT_MRUBY_TARGET target)
+  set(SCRIPT_MRUBY_CROSS 1)
+else()
+  set(SCRIPT_MRUBY_TARGET host)
+  set(SCRIPT_MRUBY_CROSS 0)
+endif()
+set(SCRIPT_MRUBY_LIBRARY "${SCRIPT_MRUBY_BUILD}/${SCRIPT_MRUBY_TARGET}/lib/libmruby.a")
+configure_file("${CMAKE_CURRENT_LIST_DIR}/mruby_build.rb"
+  "${CMAKE_CURRENT_BINARY_DIR}/mruby_build.rb" COPYONLY)
+file(MAKE_DIRECTORY "${SCRIPT_MRUBY_BUILD}/${SCRIPT_MRUBY_TARGET}/include")
+add_custom_command(OUTPUT "${SCRIPT_MRUBY_LIBRARY}"
+  COMMAND ${CMAKE_COMMAND} -E env
+    MRUBY_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/mruby_build.rb
+    MRUBY_BUILD_DIR=${SCRIPT_MRUBY_BUILD}
+    SRZ80_MRUBY_CROSS=${SCRIPT_MRUBY_CROSS}
+    SRZ80_MRUBY_CC=${CMAKE_C_COMPILER}
+    SRZ80_MRUBY_AR=${CMAKE_AR}
+    ${SCRIPT_RAKE_EXECUTABLE} -f ${SCRIPT_MRUBY_SOURCE}/Rakefile
+  WORKING_DIRECTORY "${SCRIPT_MRUBY_SOURCE}"
+  DEPENDS "${CMAKE_CURRENT_LIST_DIR}/mruby_build.rb"
+  VERBATIM)
+add_custom_target(srz80_script_mruby_build DEPENDS "${SCRIPT_MRUBY_LIBRARY}")
+add_library(srz80_script_mruby STATIC IMPORTED GLOBAL)
+set_target_properties(srz80_script_mruby PROPERTIES
+  IMPORTED_LOCATION "${SCRIPT_MRUBY_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${SCRIPT_MRUBY_SOURCE}/include;${SCRIPT_MRUBY_BUILD}/${SCRIPT_MRUBY_TARGET}/include")
+add_dependencies(srz80_script_mruby srz80_script_mruby_build)
+target_compile_definitions(srz80_script_mruby INTERFACE MRB_ENABLE_DEBUG_HOOK)
 if(NOT EXISTS "${SCRIPT_JS_SOURCE}/quickjs.h")
   FetchContent_Declare(script_quickjs
     URL https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz
@@ -60,10 +104,10 @@ set_target_properties(srz80_script_quickjs PROPERTIES POSITION_INDEPENDENT_CODE 
 target_compile_options(srz80_script_quickjs PRIVATE -w -funsigned-char)
 
 srz80_plugin(script KIND card
-  SOURCES card.cpp script_vm.cpp lua_vm.cpp js_vm.cpp util.cpp
+  SOURCES card.cpp script_vm.cpp lua_vm.cpp js_vm.cpp mruby_vm.cpp util.cpp
   INCLUDES "${CMAKE_CURRENT_LIST_DIR}"
   OUTPUT misc_script
-  LIBS srz80_script_lua srz80_script_quickjs nlohmann_json::nlohmann_json)
+  LIBS srz80_script_lua srz80_script_quickjs srz80_script_mruby nlohmann_json::nlohmann_json)
 
 option(SRZ80_SCRIPT_PHP "Build the experimental Linux/glibc PHP script backend" OFF)
 if(SRZ80_SCRIPT_PHP)

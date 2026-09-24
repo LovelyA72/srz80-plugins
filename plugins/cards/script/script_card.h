@@ -12,6 +12,7 @@ extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
 #include <quickjs.h>
+#include <mruby.h>
 }
 
 #include <algorithm>
@@ -51,7 +52,7 @@ constexpr uint64_t kQuickJsInterruptLimit = 1000;
 constexpr uint32_t kQuickJsInterruptQuantum = 10'000;
 constexpr size_t kCallbackDepthLimit = 64;
 
-enum class Backend { lua, javascript, php };
+enum class Backend { lua, javascript, mruby, php };
 struct ScriptCard;
 struct ScriptVm;
 
@@ -292,6 +293,33 @@ struct JsVm final : ScriptVm {
     static JSValue api_after(JSContext *, JSValueConst, int, JSValueConst *);
     static JSValue api_project_read(JSContext *, JSValueConst, int, JSValueConst *);
     static JSValue api_project_write(JSContext *, JSValueConst, int, JSValueConst *);
+};
+
+struct MrubyVm final : ScriptVm {
+    mrb_state *state = nullptr;
+    uint64_t instructions = 0;
+    std::map<uint64_t, mrb_value> callbacks;
+    std::set<std::string> required_paths;
+    std::vector<std::string> import_stack;
+    MrubyVm(ScriptCard &card, std::string path)
+        : ScriptVm(card, Backend::mruby, std::move(path)) {}
+    ~MrubyVm() override;
+    bool initialize(std::string &error) override;
+    bool call_reset(bool cold, std::string &error) override;
+    bool call_read(uint64_t address, uint8_t &value, std::string &error) override;
+    bool call_write(uint64_t address, uint8_t value, std::string &error) override;
+    bool invoke_callback(uint64_t id, std::string_view kind, std::string_view name,
+                         int64_t value, std::string &error) override;
+    bool save_user_state(std::string &state, std::string &error) override;
+    bool load_user_state(std::string_view state, std::string &error) override;
+    uint64_t retain_callback(int, JSValueConst) override { return 0; }
+    void release_function(uint64_t id) override;
+    uint64_t retain(mrb_value callback);
+    bool call_hook(const char *name, mrb_int argc, mrb_value *argv,
+                   mrb_value &result, std::string &error);
+    std::string exception_text();
+    static void instruction_hook(mrb_state *mrb, const mrb_irep *, const mrb_code *, mrb_value *);
+    static MrubyVm *from(mrb_state *mrb) { return static_cast<MrubyVm *>(mrb->ud); }
 };
 
 #ifdef SRZ80_SCRIPT_PHP

@@ -1,7 +1,7 @@
 # Script card
 
-The card runs one project source file in a per-card Lua 5.5.1 or QuickJS-NG
-0.15.1 runtime, or optionally the experimental PHP backend below.
+The card runs one project source file in a per-card Lua 5.5.1, QuickJS-NG
+0.15.1, or mruby 4.0.0 runtime, or optionally the experimental PHP backend below.
 The host picker stores `main_file` relative to the active
 project when the file is inside it. The card also accepts an absolute path
 inside that project, resolves it to a project-relative name and loads it through
@@ -43,11 +43,36 @@ modules and caches them by normalized path. JavaScript uses `import` and
 project-relative `.js` modules. Both loaders resolve relative to the importing
 file and support cyclic imports.
 
+Select a project-relative `.rb` file for mruby. Define the hooks above as
+top-level methods. Ruby uses the `Card` and `Project` modules for the operations
+listed above, for example `Card.log("ready")` and `Project.read("settings.txt")`.
+Timer and signal callbacks are Ruby procs. The global `$state` starts as an
+empty Hash; only JSON-compatible Hashes with String keys can be saved. The
+mruby build includes its compiler and core library without file, process, or
+network gems.
+`require("folder/module.rb")` loads project-relative `.rb` files and caches
+them by normalized path, including while a cyclic import is in progress.
+
+```ruby
+$state = {"value" => 0}
+def on_reset(cold)
+  $state["value"] = cold ? 0 : $state["value"]
+end
+def on_read(address)
+  $state["value"]
+end
+def on_write(address, value)
+  $state["value"] = value
+end
+```
+
 The source budget is 16 MiB total across the main file and all loaded modules;
 each project-file operation is limited to 16 MiB by the host extension. Each
 callback is limited to approximately 10 million VM instructions, checked at
 100-instruction intervals in Lua and QuickJS's 10,000-instruction interrupt
-interval. Each VM is limited to 64 MiB and a 1 MiB native stack.
+interval. mruby checks every VM instruction against a 10 million instruction
+budget per callback. Lua and QuickJS VMs are limited to 64 MiB and a 1 MiB
+native stack.
 
 Snapshots save only the script's global `state` value, which must be a JSON
 object. Functions, cycles, non-string object keys, and unsupported values make
@@ -56,9 +81,10 @@ VM internals, loaded module caches, subscriptions, and pending timers are not
 serialized. Timers are canceled when the card is removed, the main file is
 changed, or a new run replaces the VM. Completed one-shot timers are released.
 
-Lua and QuickJS versions and archive hashes are pinned in `CMakeLists.txt`.
+Lua, QuickJS, and mruby versions and archive hashes are pinned in `CMakeLists.txt`.
 If the local `vendor/` directory is absent, CMake fetches those releases into
-the build tree. Their license notices are included with their sources.
+the build tree. mruby builds with Ruby and Rake installed on the build machine.
+Their license notices are included with their sources.
 
 ## Experimental PHP backend
 
