@@ -1,7 +1,7 @@
 # Script card
 
 The card runs one project source file in a per-card Lua 5.5.1, QuickJS-NG
-0.15.1, or mruby 4.0.0 runtime, or optionally the experimental PHP backend below.
+0.15.1, mruby 4.0.0, or pocketpy runtime, or optionally the experimental PHP backend below.
 The host picker stores `main_file` relative to the active
 project when the file is inside it. The card also accepts an absolute path
 inside that project, resolves it to a project-relative name and loads it through
@@ -53,6 +53,22 @@ network gems.
 `require("folder/module.rb")` loads project-relative `.rb` files and caches
 them by normalized path, including while a cyclic import is in progress.
 
+Select a project-relative `.py` file for pocketpy. Python defines the same
+`on_reset`, `on_read`, and `on_write` hooks. Import `card` for `log`, `read`,
+`write`, `time_ns`, and `after`; import `project` for byte-oriented `read` and
+`write`. The global `state` dictionary is saved as JSON. A tutorial is in
+[`examples/tutorials/script-python`](../../../examples/tutorials/script-python).
+The pocketpy build disables operating-system, thread, and native-module APIs.
+At most 15 Python cards can run concurrently (one of pocketpy's 16 VM slots is
+reserved for its default VM).
+Python source loading and each outer callback have an instruction budget of
+10 million by default. Set `"python_instruction_limit"` in the script card's
+`config` object to a positive integer up to 1 billion to adjust it for that
+card. Reentrant callbacks share the outer call's budget. Exceeding the budget
+raises `TimeoutError` and reports the script error to the host.
+For example, `"config": {"main_file": "main.py", "python_instruction_limit": 25000000}`
+allows 25 million Python instructions per outer call.
+
 ```ruby
 $state = {"value" => 0}
 def on_reset(cold)
@@ -73,6 +89,8 @@ callback is limited to approximately 10 million VM instructions, checked at
 interval. mruby checks every VM instruction against a 10 million instruction
 budget per callback. Lua and QuickJS VMs are limited to 64 MiB and a 1 MiB
 native stack.
+The pocketpy build has a small patch at its bytecode dispatch point so Python
+can enforce the same kind of deterministic budget.
 
 Snapshots save only the script's global `state` value, which must be a JSON
 object. Functions, cycles, non-string object keys, and unsupported values make
@@ -81,7 +99,7 @@ VM internals, loaded module caches, subscriptions, and pending timers are not
 serialized. Timers are canceled when the card is removed, the main file is
 changed, or a new run replaces the VM. Completed one-shot timers are released.
 
-Lua, QuickJS, and mruby versions and archive hashes are pinned in `CMakeLists.txt`.
+Lua, QuickJS, mruby, and pocketpy versions are pinned in `CMakeLists.txt`.
 If the local `vendor/` directory is absent, CMake fetches those releases into
 the build tree. mruby builds with Ruby and Rake installed on the build machine.
 Their license notices are included with their sources.

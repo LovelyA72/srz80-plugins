@@ -122,15 +122,17 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
         backend = Backend::javascript;
     else if (ext == ".rb")
         backend = Backend::mruby;
+    else if (ext == ".py")
+        backend = Backend::python;
 #ifdef SRZ80_SCRIPT_PHP
     else if (ext == ".php")
         backend = Backend::php;
 #endif
     else {
 #ifdef SRZ80_SCRIPT_PHP
-        error = "Unsupported main script extension (choose .lua, .js, .rb or .php)";
+        error = "Unsupported main script extension (choose .lua, .js, .rb, .py or .php)";
 #else
-        error = "Unsupported main script extension (choose .lua, .js or .rb)";
+        error = "Unsupported main script extension (choose .lua, .js, .rb or .py)";
 #endif
         return {};
     }
@@ -160,6 +162,8 @@ std::unique_ptr<ScriptVm> ScriptCard::make_vm(std::string_view path, std::string
         candidate = std::make_unique<JsVm>(*this, normalized);
     else if (backend == Backend::mruby)
         candidate = std::make_unique<MrubyVm>(*this, normalized);
+    else if (backend == Backend::python)
+        candidate = std::make_unique<PythonVm>(*this, normalized);
 #ifdef SRZ80_SCRIPT_PHP
     else
         candidate = make_php_vm(*this, normalized);
@@ -387,11 +391,22 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner,
             bool unknown_setting = false;
             if (settings.is_object()) {
                 for (auto it = settings.begin(); it != settings.end(); ++it)
-                    unknown_setting |= it.key() != "main_file";
+                    unknown_setting |= it.key() != "main_file" &&
+                                       it.key() != "python_instruction_limit";
             }
             if (!settings.is_object() || unknown_setting) {
-                set_create_error(config, "Card configuration accepts only the main_file setting");
+                set_create_error(config, "Card configuration accepts only main_file and python_instruction_limit");
                 return SRH_INVALID;
+            }
+            if (settings.contains("python_instruction_limit")) {
+                const auto &value = settings["python_instruction_limit"];
+                if (!value.is_number_unsigned() ||
+                    value.get<uint64_t>() < 1 ||
+                    value.get<uint64_t>() > kMaxPythonInstructionLimit) {
+                    set_create_error(config, "python_instruction_limit must be an integer from 1 to 1000000000");
+                    return SRH_INVALID;
+                }
+                card->python_instruction_limit = value.get<uint64_t>();
             }
             if (settings.contains("main_file")) {
                 if (!settings["main_file"].is_string()) {
@@ -498,9 +513,9 @@ SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *property) 
                  "main_file",
                  "Script",
 #ifdef SRZ80_SCRIPT_PHP
-                 "Project main source (.lua, .js, .rb or .php)",
+                 "Project main source (.lua, .js, .rb, .py or .php)",
 #else
-                 "Project main source (.lua, .js or .rb)",
+                 "Project main source (.lua, .js, .rb or .py)",
 #endif
                  SRH_TEXT,
                  0,
@@ -617,7 +632,7 @@ const SrhCardDescriptor descriptor{
 #ifdef SRZ80_SCRIPT_PHP
     "Run a Lua, JavaScript or PHP project script (PHP experimental)",
 #else
-    "Run a Lua 5.5 or QuickJS-NG project script",
+    "Run a Lua, JavaScript, Ruby or Python project script",
 #endif
     0xF000,
     256,

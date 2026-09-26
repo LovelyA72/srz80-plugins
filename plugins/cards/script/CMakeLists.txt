@@ -2,6 +2,28 @@ set(SCRIPT_VENDOR "${CMAKE_CURRENT_LIST_DIR}/vendor")
 set(SCRIPT_LUA_SOURCE "${SCRIPT_VENDOR}/lua")
 set(SCRIPT_JS_SOURCE "${SCRIPT_VENDOR}/quickjs")
 set(SCRIPT_MRUBY_SOURCE "${SCRIPT_VENDOR}/mruby")
+set(SCRIPT_POCKETPY_SOURCE "${SCRIPT_VENDOR}/pocketpy")
+set(PK_ENABLE_OS OFF CACHE BOOL "" FORCE)
+set(PK_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
+set(PK_ENABLE_DLL OFF CACHE BOOL "" FORCE)
+if(NOT EXISTS "${SCRIPT_POCKETPY_SOURCE}/include/pocketpy/pocketpy.h")
+  FetchContent_Declare(script_pocketpy
+    GIT_REPOSITORY https://github.com/pocketpy/pocketpy.git
+    GIT_TAG 128fc43667f213e48472d8fe20fdb43be32bac22
+    GIT_SHALLOW FALSE)
+  FetchContent_MakeAvailable(script_pocketpy)
+  set(SCRIPT_POCKETPY_ROOT "${script_pocketpy_SOURCE_DIR}")
+else()
+  add_subdirectory("${SCRIPT_POCKETPY_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/pocketpy")
+  set(SCRIPT_POCKETPY_ROOT "${SCRIPT_POCKETPY_SOURCE}")
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/pocketpy_budget.cmake")
+# SYSTEM keeps pocketpy's headers out of this repository's -Wpedantic warnings.
+set_target_properties(pocketpy PROPERTIES POSITION_INDEPENDENT_CODE YES SYSTEM YES)
+# The runtime is linked statically: keep its API private to this module and work
+# around the MinGW time functions pocketpy expects (see pocketpy_compat.h).
+target_compile_options(pocketpy PRIVATE -fvisibility=hidden
+  -include "${CMAKE_CURRENT_LIST_DIR}/pocketpy_compat.h")
 # Some checkouts omit the ignored vendor directory. Fetch the same pinned
 # releases in that case, without adding either runtime's standalone programs.
 if(NOT EXISTS "${SCRIPT_LUA_SOURCE}/lua.h")
@@ -104,10 +126,14 @@ set_target_properties(srz80_script_quickjs PROPERTIES POSITION_INDEPENDENT_CODE 
 target_compile_options(srz80_script_quickjs PRIVATE -w -funsigned-char)
 
 srz80_plugin(script KIND card
-  SOURCES card.cpp script_vm.cpp lua_vm.cpp js_vm.cpp mruby_vm.cpp util.cpp
+  SOURCES card.cpp script_vm.cpp lua_vm.cpp js_vm.cpp mruby_vm.cpp python_vm.cpp util.cpp
   INCLUDES "${CMAKE_CURRENT_LIST_DIR}"
   OUTPUT misc_script
-  LIBS srz80_script_lua srz80_script_quickjs srz80_script_mruby nlohmann_json::nlohmann_json)
+  LIBS srz80_script_lua srz80_script_quickjs srz80_script_mruby pocketpy nlohmann_json::nlohmann_json)
+# This module's sources include pocketpy.h through script_card.h; the forced
+# include keeps pocketpy's export attribute out of them.
+target_compile_options(plugin_script PRIVATE
+  -include "${CMAKE_CURRENT_LIST_DIR}/pocketpy_compat.h")
 
 option(SRZ80_SCRIPT_PHP "Build the experimental Linux/glibc PHP script backend" OFF)
 if(SRZ80_SCRIPT_PHP)

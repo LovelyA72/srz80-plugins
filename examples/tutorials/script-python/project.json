@@ -1,0 +1,39 @@
+{
+  "cards": [
+    {
+      "base": 16,
+      "config": {
+        "main_file": "main.py"
+      },
+      "plugin": "script",
+      "size": 1,
+      "space": "demo.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A pocketpy timer advances a counter exposed at demo.io:0x10.",
+    "title": "Python script counter"
+  },
+  "name": "Python script demo",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFF",
+      "name": "demo.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

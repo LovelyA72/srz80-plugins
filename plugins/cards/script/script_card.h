@@ -13,6 +13,8 @@ extern "C" {
 #include <lualib.h>
 #include <quickjs.h>
 #include <mruby.h>
+#define PK_IS_PUBLIC_INCLUDE
+#include <pocketpy/pocketpy.h>
 }
 
 #include <algorithm>
@@ -48,11 +50,13 @@ constexpr size_t kVmMemoryLimit = 64ull * 1024 * 1024;
 constexpr size_t kStateLimit = 1024ull * 1024;
 constexpr int kLuaHookStep = 100;
 constexpr uint64_t kLuaInstructionLimit = 10'000'000;
+constexpr uint64_t kDefaultPythonInstructionLimit = 10'000'000;
+constexpr uint64_t kMaxPythonInstructionLimit = 1'000'000'000;
 constexpr uint64_t kQuickJsInterruptLimit = 1000;
 constexpr uint32_t kQuickJsInterruptQuantum = 10'000;
 constexpr size_t kCallbackDepthLimit = 64;
 
-enum class Backend { lua, javascript, mruby, php };
+enum class Backend { lua, javascript, mruby, python, php };
 struct ScriptCard;
 struct ScriptVm;
 
@@ -90,6 +94,7 @@ struct ScriptCard {
     uint64_t size = 0;
     fs::path project_root;
     std::string main_file;
+    uint64_t python_instruction_limit = kDefaultPythonInstructionLimit;
     SrhHandle resume_subscription = 0;
     bool restart_pending = false;
     std::string main_relative;
@@ -312,6 +317,8 @@ struct MrubyVm final : ScriptVm {
                          int64_t value, std::string &error) override;
     bool save_user_state(std::string &state, std::string &error) override;
     bool load_user_state(std::string_view state, std::string &error) override;
+    // Python retains callbacks through retain() and the shared registry; the
+    // Lua stack index / JavaScript value entry point stays unused.
     uint64_t retain_callback(int, JSValueConst) override { return 0; }
     void release_function(uint64_t id) override;
     uint64_t retain(mrb_value callback);
@@ -320,6 +327,28 @@ struct MrubyVm final : ScriptVm {
     std::string exception_text();
     static void instruction_hook(mrb_state *mrb, const mrb_irep *, const mrb_code *, mrb_value *);
     static MrubyVm *from(mrb_state *mrb) { return static_cast<MrubyVm *>(mrb->ud); }
+};
+
+struct PythonVm final : ScriptVm {
+    int slot = -1;
+    uint64_t instructions_remaining = 0;
+    PythonVm(ScriptCard &card, std::string path)
+        : ScriptVm(card, Backend::python, std::move(path)) {}
+    ~PythonVm() override;
+    bool initialize(std::string &error) override;
+    bool call_reset(bool cold, std::string &error) override;
+    bool call_read(uint64_t address, uint8_t &value, std::string &error) override;
+    bool call_write(uint64_t address, uint8_t value, std::string &error) override;
+    bool invoke_callback(uint64_t id, std::string_view kind, std::string_view name,
+                         int64_t value, std::string &error) override;
+    bool save_user_state(std::string &state, std::string &error) override;
+    bool load_user_state(std::string_view state, std::string &error) override;
+    uint64_t retain_callback(int, JSValueConst) override { return 0; }
+    void release_function(uint64_t id) override;
+    uint64_t retain(py_Ref callback);
+    bool call(py_Ref function, const std::vector<int64_t> &args, std::string &error);
+    bool call_named(const char *name, const std::vector<int64_t> &args,
+                    std::string &error);
 };
 
 #ifdef SRZ80_SCRIPT_PHP
