@@ -6,7 +6,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
-#include <srz80/font_awesome.h>
+#include <srz80/tabler_icons.h>
 #include <srz80/tool.h>
 namespace srz80::patchbay::ui {
 namespace {
@@ -426,7 +426,7 @@ void canvas(Tool &t) {
                     ImGui::SetTooltip("%s", tooltip);
                 return clicked;
             };
-            if (icon_button(SRZ80_FA_TRASH, "Remove component")) {
+            if (icon_button(SRZ80_TI_TRASH, "Remove component")) {
                 auto next = t.topology;
                 auto &cs = next["components"];
                 cs.erase(std::remove_if(cs.begin(), cs.end(), [&](const Json &c) { return c["id"] == n.local_id; }),
@@ -446,7 +446,7 @@ void canvas(Tool &t) {
                 t.selected.clear();
             }
             ImGui::SameLine(0, 3);
-            if (icon_button(SRZ80_FA_CLONE, "Copy component")) {
+            if (icon_button(SRZ80_TI_FILES, "Copy component")) {
                 auto next = t.topology;
                 auto def = n.definition;
                 const auto id = t.new_id("c");
@@ -458,12 +458,12 @@ void canvas(Tool &t) {
                 t.selected = qualified_id;
             }
             ImGui::SameLine(0, 3);
-            if (icon_button(SRZ80_FA_EXCHANGE, n.flipped ? "Put ports back on their normal sides"
+            if (icon_button(SRZ80_TI_TRANSFER, n.flipped ? "Put ports back on their normal sides"
                                                          : "Swap left and right ports")) {
                 t.flips()[n.id] = !n.flipped;
             }
             ImGui::SameLine(0, 3);
-            if (icon_button(SRZ80_FA_ELLIPSIS_H, "Component settings"))
+            if (icon_button(SRZ80_TI_DOTS, "Component settings"))
                 ImGui::OpenPopup("settings");
             if (ImGui::BeginPopup("settings")) {
                 ImGui::TextUnformatted(name.c_str());
