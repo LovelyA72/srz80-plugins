@@ -172,9 +172,9 @@ local function tick_track(track)
         else track.pos = track.pos - distance end
       end
     elseif command == 0x98 then
-      track.pan = 1  -- left; the right output receives this voice at half level
+      track.pan = 1  -- left: the right output receives this voice at half level
     elseif command == 0x99 then
-      track.pan = 2  -- right; the left output receives this voice at half level
+      track.pan = 2  -- right: the left output receives this voice at half level
     elseif command == 0x9A then
       track.pan = 3  -- center
     elseif command == 0x83 then
