@@ -4,6 +4,11 @@ This repo hosts plugins for the SRZ80.
 
 Want to get your own plugin included? Open a pr!
 
+| Build Type | Status |
+| ----------- | ----------- |
+| Push build | [![Verify builds](https://github.com/LovelyA72/srz80-plugins/actions/workflows/build.yml/badge.svg)](https://github.com/LovelyA72/srz80-plugins/actions/workflows/build.yml) |
+| Release | [![Build release archives](https://github.com/LovelyA72/srz80-plugins/actions/workflows/release.yml/badge.svg)](https://github.com/LovelyA72/srz80-plugins/actions/workflows/release.yml)|
+
 ## Building
 
 On Linux, build Windows plugins with the MinGW-w64 `x86_64-w64-mingw32` GCC/G++

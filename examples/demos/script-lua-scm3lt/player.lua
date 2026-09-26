@@ -23,7 +23,7 @@
 --         l_;_;I      l____;_I
 --                      cgmm  
 --
--- Set song.txt to the two-digit hexadecimal GSF song index; TRACKS.md lists
+-- Set song.txt to the two-digit hexadecimal GSF song index, TRACKS.md lists
 -- the album. The mixer is an approximation: no per-note attack/release envelope.
 local SPACE, DAC_LEFT, DAC_RIGHT = "scm3lt.io", 0x10, 0x20
 local RATE, BLOCK = 22919, 16
@@ -55,7 +55,7 @@ local function data_byte(offset) return u8(DATA_OFFSET + offset) end
 local function gain(level)
   level = math.max(0, math.min(31, level))
   -- The driver handles levels 1,7,13,19,25,31 with a shift amount in the
-  -- volume field; the mixer scales the sample by 2^shift.
+  -- volume field, the mixer scales the sample by 2^shift.
   if level % 6 == 1 then return 8 << ((level - 1) // 6) end
   local a, b, c, d = gain_table:byte(level * 4 + 1, level * 4 + 4)
   return a | (b << 8) | (c << 16) | (d << 24)
@@ -126,7 +126,7 @@ local function tick_track(track)
       end
       -- Reproduce the driver's 20.12 sample position and pitch table lookup.
       -- Drum voices and 4-bit delta streams run at a fixed one step per
-      -- output sample; everything else uses the pitch table.
+      -- output sample, everything else uses the pitch table.
       local fixed = track.instrument == 0xC8 or (track.sample and track.sample.delta)
       track.step = track.note and
         (fixed and 1 or pitch_step(command, track.pitch or 0)) or 0
@@ -182,7 +182,7 @@ local function tick_track(track)
     elseif command == 0x84 or command == 0x85 or command == 0x86 or
            command == 0x8C or command == 0xAB or command == 0xC8 or
            command == 0xFF then
-      -- Commands without operands; their voice/effect state is pending.
+      -- Commands without operands, their voice/effect state is pending.
     elseif command_lengths[command] then
       for _ = 1, command_lengths[command] do next_byte(track) end
     else

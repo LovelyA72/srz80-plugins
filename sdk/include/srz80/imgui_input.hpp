@@ -14,6 +14,17 @@
 
 namespace srz80::gui {
 
+// Call immediately after an ImGui value control. This is deliberately opt-in:
+// middle-clicking controls without an explicit reset value remains unchanged.
+template <typename T>
+requires std::equality_comparable<T>
+bool reset_on_middle_click(T &value, const T &reset_value) {
+    if (!ImGui::IsItemClicked(ImGuiMouseButton_Middle) || value == reset_value)
+        return false;
+    value = reset_value;
+    return true;
+}
+
 template <std::unsigned_integral T>
 bool input_hexadecimal(const char *label, T &value, uint32_t bits = sizeof(T) * 8u) {
     const auto digits = std::clamp(bits / 4u + (bits % 4u != 0), 1u, 16u);
