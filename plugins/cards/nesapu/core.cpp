@@ -356,10 +356,12 @@ void NesApu::clock() {
         clock_envelope(noise_.envelope);
     }
 
-    /* A programmed period of zero is a one-cycle period, so the counter runs
-       down from the programmed value and clocks on reaching zero. */
-    clock_pulse(pulses_[0]);
-    clock_pulse(pulses_[1]);
+    /* Pulse timers run at the APU rate, once per two CPU cycles.  The
+       triangle, noise, and delta periods below are in CPU cycles. */
+    if (divider_ == 0) {
+        clock_pulse(pulses_[0]);
+        clock_pulse(pulses_[1]);
+    }
 
     /* The triangle advances its sequence only while the length counter and the
        linear counter are both non-zero; otherwise it holds its position, which
