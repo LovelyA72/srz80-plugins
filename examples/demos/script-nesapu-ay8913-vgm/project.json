@@ -18,14 +18,17 @@
       "space": "vgm.io"
     },
     {
-      "base": "0x5000",
+      "base": 20480,
+      "clock": 0,
       "config": {
         "chip_clock_hz": 1789773,
         "sample_rate": 44100,
-        "stream_name": "Sunsoft 5B (AY approximation)"
+        "stream_name": "AY8913"
       },
       "name": "Sunsoft 5B",
       "plugin": "ay8913",
+      "priority": 0,
+      "reset_vector": 0,
       "size": 2,
       "space": "vgm.io"
     },
