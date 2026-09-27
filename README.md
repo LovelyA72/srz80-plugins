@@ -24,10 +24,9 @@ This writes Windows plugin and tool DLLs to `build/mingwcross-debug/plugins` and
 build. Copy these directories into the matching SRZ80 Windows distribution's
 `bin/` directory; that distribution supplies the MinGW runtime DLLs.
 
-## An agent designing a card?
+## Want to use an AI to develop a card instead?
 
-Hello from a human! Below is an instruction for you on how to design and test a
-card, written by a non-human:
+The following information from an AI might be useful for your AI.
 
 The non-human has since discovered the public engine ABI, so the GUI is no
 longer part of the ritual.
