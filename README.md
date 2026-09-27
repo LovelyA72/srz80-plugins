@@ -28,9 +28,6 @@ build. Copy these directories into the matching SRZ80 Windows distribution's
 
 The following information from an AI might be useful for your AI.
 
-The non-human has since discovered the public engine ABI, so the GUI is no
-longer part of the ritual.
-
 ## Card execution-state format
 
 Every card with save/load callbacks uses `<state.hpp>` from `sdk/helpers`.
