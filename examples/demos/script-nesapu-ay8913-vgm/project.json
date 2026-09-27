@@ -1,0 +1,90 @@
+{
+  "audio": {
+    "gain_db": 15.0
+  },
+  "cards": [
+    {
+      "base": "0x4000",
+      "config": {
+        "clock_hz": 1789773,
+        "region": "ntsc",
+        "sample_rate": 44100,
+        "sample_space": "vgm.io",
+        "stream_name": "NES APU"
+      },
+      "name": "NES APU",
+      "plugin": "nesapu",
+      "size": 24,
+      "space": "vgm.io"
+    },
+    {
+      "base": "0x5000",
+      "config": {
+        "chip_clock_hz": 1789773,
+        "sample_rate": 44100,
+        "stream_name": "Sunsoft 5B (AY approximation)"
+      },
+      "name": "Sunsoft 5B",
+      "plugin": "ay8913",
+      "size": 2,
+      "space": "vgm.io"
+    },
+    {
+      "base": "0xC000",
+      "config": {
+        "main_file": "player.lua"
+      },
+      "name": "VGM player",
+      "plugin": "script",
+      "size": "0x4000",
+      "space": "vgm.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "Lua replays test.vgm to a NES APU and AY-3-8913, including NES DPCM sample blocks.",
+    "title": "NES APU + Sunsoft 5B VGM"
+  },
+  "mixer": {
+    "master_volume": 100,
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "NES APU",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "Sunsoft 5B (AY approximation)",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 52
+      }
+    ]
+  },
+  "name": "Lua NES APU + AY8913 VGM player",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "vgm.io",
+      "unclaimed": 0
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}
