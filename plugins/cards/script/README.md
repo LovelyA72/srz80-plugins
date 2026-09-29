@@ -32,9 +32,12 @@ card.signal_read(name) -> millivolts
 card.signal_drive(name, millivolts, strength)
 card.on_signal(name, callback(name, millivolts))
 card.after(delay_ns, callback(simulated_time_ns)) -> timer id
-project.read(relative_path) -> bytes-as-string
-project.write(relative_path, bytes-as-string)
+project.read(relative_path) -> file bytes
+project.write(relative_path, bytes) -> writes file bytes
 ```
+
+JavaScript `project.read` returns a `Uint8Array`, and `project.write` accepts a
+`Uint8Array`. Lua, Ruby, and PHP use binary strings. Python uses `bytes`.
 
 Lua loads the base, coroutine, math, string, table, and UTF-8 libraries. Its
 `require("folder/module.lua")` loader accepts only project-relative `.lua`

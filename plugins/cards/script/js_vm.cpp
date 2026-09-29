@@ -680,7 +680,10 @@ JSValue JsVm::api_project_read(JSContext *context, JSValueConst, int argc,
         std::string normalized;
         if (normalize_project_path(path, normalized))
             vm->file_snapshots[normalized] = file_fingerprint({data, bytes.size()});
-        return JS_NewStringLen(context, data, bytes.size());
+        const uint8_t *buffer = bytes.empty()
+                                    ? reinterpret_cast<const uint8_t *>("")
+                                    : bytes.data();
+        return JS_NewUint8ArrayCopy(context, buffer, bytes.size());
     } catch (...) {
         return JS_ThrowInternalError(context, "project.read failed");
     }
@@ -690,22 +693,24 @@ JSValue JsVm::api_project_write(JSContext *context, JSValueConst, int argc,
                                 JSValueConst *argv) {
     auto *vm = from(context);
     if (argc < 2)
-        return js_error(context, "project.write expects a relative path and data string");
+        return js_error(context, "project.write expects a relative path and Uint8Array");
     try {
         std::string path, error;
         if (!js_string(context, argv[0], path, error))
             return js_error(context, error);
+        if (JS_GetTypedArrayType(argv[1]) != JS_TYPED_ARRAY_UINT8)
+            return js_error(context, "project.write data must be a Uint8Array");
+        JSValue buffer = JS_GetTypedArrayBuffer(context, argv[1], nullptr, nullptr, nullptr);
+        if (JS_IsException(buffer))
+            return JS_EXCEPTION;
+        JS_FreeValue(context, buffer);
         size_t size = 0;
-        const char *bytes = JS_ToCStringLen2(context, &size, argv[1], false);
-        if (!bytes)
-            return js_error(context, "project.write data must be a string");
-        if (size > kFileLimit) {
-            JS_FreeCString(context, bytes);
+        const uint8_t *bytes = JS_GetUint8Array(context, &size, argv[1]);
+        if (!bytes && size != 0)
+            return JS_EXCEPTION;
+        if (size > kFileLimit)
             return js_error(context, "project.write data exceeds 16 MiB");
-        }
-        const SrhStatus status = vm->card.write_project(
-            path, reinterpret_cast<const uint8_t *>(bytes), size);
-        JS_FreeCString(context, bytes);
+        const SrhStatus status = vm->card.write_project(path, bytes, size);
         if (status != SRH_OK)
             return js_error(context, ScriptVm::status_text(status));
         return JS_TRUE;

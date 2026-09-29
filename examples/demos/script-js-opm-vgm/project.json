@@ -1,0 +1,62 @@
+{
+  "cards": [
+    {
+      "base": 128,
+      "config": {
+        "chip_clock_hz": 3579545,
+        "sample_rate": 44100,
+        "stream_name": "YM2414 VGM"
+      },
+      "plugin": "ym2414",
+      "size": 2,
+      "space": "vgm.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "player.js"
+      },
+      "plugin": "script",
+      "size": 1,
+      "space": "vgm.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "Replays YM2151 VGM register writes on a YM2414 card.",
+    "title": "JavaScript YM2151 VGM on YM2414"
+  },
+  "mixer": {
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "YM2414 VGM",
+        "ordinal": 0,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "JavaScript YM2151 VGM on YM2414",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "vgm.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "{\"schema\":1,\"sources\":{}}"
+  },
+  "version": 2
+}
