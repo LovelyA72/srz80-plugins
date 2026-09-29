@@ -9,7 +9,8 @@
 #include <string>
 
 namespace {
-constexpr uint32_t kRegisterCount = 5;
+constexpr uint32_t kRegisterCount = 6;
+constexpr uint32_t kLegacyRegisterCount = 5;
 constexpr uint32_t kFifoCapacity = 32;
 constexpr uint32_t kDefaultRate = 22'050;
 constexpr uint64_t kPhaseOne = uint64_t{1} << 32;
@@ -76,6 +77,7 @@ struct Dac {
     std::array<uint8_t, kFifoCapacity> fifo{};
     uint8_t read_index = 0, write_index = 0, count = 0;
     uint8_t held = 0x80;
+    uint8_t pan = 127;
     uint8_t current = 0x80, next = 0x80;
     bool resampler_primed = false;
     bool fifo_mode = false, underflow = false, overflow = false;
@@ -87,7 +89,7 @@ struct Dac {
         resampler_primed = false;
     }
     void reset() {
-        fifo_mode = false; underflow = overflow = false; held = 0x80;
+        fifo_mode = false; underflow = overflow = false; held = 0x80; pan = 127;
         fifo_rate = output_rate < kDefaultRate ? output_rate : kDefaultRate;
         clear_fifo();
     }
@@ -122,6 +124,7 @@ struct Dac {
             break;
         case 3: fifo_rate = (fifo_rate & 0xFF00u) | value; break;
         case 4: fifo_rate = (fifo_rate & 0x00FFu) | (uint32_t(value) << 8); break;
+        case 5: pan = value; break;
         }
         if (!fifo_rate) fifo_rate = 1;
     }
@@ -132,11 +135,13 @@ struct Dac {
         case 2: return status();
         case 3: return static_cast<uint8_t>(fifo_rate);
         case 4: return static_cast<uint8_t>(fifo_rate >> 8);
+        case 5: return pan;
         default: return 0;
         }
     }
     void render(uint32_t frames, int16_t *out) {
         for (uint32_t frame = 0; frame < frames; ++frame) {
+            int32_t sample = 0;
             if (fifo_mode) {
                 // This follows the YMW258-style linear source resampler. It makes every
                 // 16-bit FIFO rate representable, including rates above host output.
@@ -148,30 +153,30 @@ struct Dac {
                 }
                 const int64_t current_sample = (int32_t(current) - 128) << 8;
                 const int64_t next_sample = (int32_t(next) - 128) << 8;
-                const int16_t sample = static_cast<int16_t>(current_sample +
+                sample = static_cast<int32_t>(current_sample +
                     ((next_sample - current_sample) * static_cast<int64_t>(phase) >> 32));
-                out[size_t(frame) * 2] = sample;
-                out[size_t(frame) * 2 + 1] = sample;
                 phase += (static_cast<uint64_t>(fifo_rate) << 32) / output_rate;
                 while (phase >= kPhaseOne) {
                     phase -= kPhaseOne;
                     current = next;
                     next = consume();
                 }
-                continue;
+            } else {
+                sample = (int32_t(held) - 128) << 8;
             }
-            const int16_t sample = static_cast<int16_t>((int32_t(held) - 128) << 8);
-            out[size_t(frame) * 2] = sample;
-            out[size_t(frame) * 2 + 1] = sample;
+            out[size_t(frame) * 2] = static_cast<int16_t>(
+                pan <= 127 ? sample : sample * (255 - pan) / 128);
+            out[size_t(frame) * 2 + 1] = static_cast<int16_t>(
+                pan >= 127 ? sample : sample * pan / 127);
         }
     }
 };
 
-struct Card { uint64_t base = 0; SrhHandle mapping = 0, stream = 0; Dac dac; };
+struct Card { uint64_t base = 0, size = 0; SrhHandle mapping = 0, stream = 0; Dac dac; };
 
 SrhStatus access(void *context, uint64_t address, uint8_t *value, bool peek) {
     auto &card = *static_cast<Card *>(context);
-    if (!value || address < card.base || address - card.base >= kRegisterCount) return SRH_INVALID;
+    if (!value || address < card.base || address - card.base >= card.size) return SRH_INVALID;
     *value = card.dac.read(uint32_t(address - card.base));
     (void)peek;
     return SRH_OK;
@@ -180,7 +185,7 @@ SrhStatus SRH_CALL read(void *c, uint64_t a, uint8_t *v) { return access(c, a, v
 SrhStatus SRH_CALL peek(void *c, uint64_t a, uint8_t *v) { return access(c, a, v, true); }
 SrhStatus SRH_CALL write(void *context, uint64_t address, uint8_t value) {
     auto &card = *static_cast<Card *>(context);
-    if (address < card.base || address - card.base >= kRegisterCount) return SRH_INVALID;
+    if (address < card.base || address - card.base >= card.size) return SRH_INVALID;
     card.dac.write(uint32_t(address - card.base), value);
     return SRH_OK;
 }
@@ -192,7 +197,8 @@ SrhStatus SRH_CALL render(void *context, uint64_t, uint32_t frames, int16_t *out
 SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhConfig *config, void **out) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!srz80::sdk::valid(host) || !srz80::sdk::valid(config) || !out || !host->map ||
-            !config->space || config->size != kRegisterCount || config->base > UINT64_MAX - 4)
+            !config->space || (config->size != kLegacyRegisterCount && config->size != kRegisterCount) ||
+            config->base > UINT64_MAX - (config->size - 1))
             return SRH_INVALID;
         Settings settings;
         if (!parse_settings(config, settings)) return SRH_INVALID;
@@ -204,8 +210,10 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             audio->channels != 2 || audio->format != SRH_AUDIO_S16_STEREO)
             return SRH_INVALID;
         auto card = std::make_unique<Card>();
-        card->base = config->base; card->dac.output_rate = settings.sample_rate; card->dac.reset();
-        SrhMapping mapping{SRH_INIT(SrhMapping), config->space, config->base, config->base + 4,
+        card->base = config->base; card->size = config->size;
+        card->dac.output_rate = settings.sample_rate; card->dac.reset();
+        SrhMapping mapping{SRH_INIT(SrhMapping), config->space, config->base,
+            config->base + config->size - 1,
             config->priority, card.get(), read, write, peek, nullptr};
         auto status = host->map(host->context, owner, &mapping, &card->mapping);
         if (status != SRH_OK) return status;
@@ -219,13 +227,13 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
 void SRH_CALL destroy(void *context) { delete static_cast<Card *>(context); }
 SrhStatus SRH_CALL reset(void *context, uint32_t) { static_cast<Card *>(context)->dac.reset(); return SRH_OK; }
 
-constexpr uint32_t kPropertyCount = 5;
+constexpr uint32_t kPropertyCount = 6;
 uint32_t SRH_CALL property_count(void *) { return kPropertyCount; }
 SrhStatus SRH_CALL property_info(void *, uint32_t index, SrhProperty *out) {
     if (!srz80::sdk::valid(out) || index >= kPropertyCount) return SRH_INVALID;
-    static constexpr const char *names[] = {"Mode", "DAC value", "FIFO level", "FIFO rate", "Status"};
-    static constexpr const char *descriptions[] = {"0: direct write; 1: 32-byte FIFO", "Current unsigned PCM value", "Queued FIFO bytes", "FIFO samples per second", "Sticky underflow and overflow flags"};
-    const uint32_t bits[] = {1, 8, 6, 16, 8};
+    static constexpr const char *names[] = {"Mode", "DAC value", "FIFO level", "FIFO rate", "Status", "Pan"};
+    static constexpr const char *descriptions[] = {"0: direct write, 1: 32-byte FIFO", "Current unsigned PCM value", "Queued FIFO bytes", "FIFO samples per second", "Sticky underflow and overflow flags", "0: left, 127: center, 255: right"};
+    const uint32_t bits[] = {1, 8, 6, 16, 8, 8};
     *out = {SRH_INIT(SrhProperty), names[index], "PCM DAC", descriptions[index],
             index == 0 ? SRH_ENUM : SRH_UNSIGNED, bits[index], 10, 0,
             index == 0 ? "direct|fifo" : nullptr, SRH_PROPERTY_RUNTIME};
@@ -241,12 +249,13 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) {
     case 2: out->unsigned_value = dac.count; break;
     case 3: out->unsigned_value = dac.fifo_rate; break;
     case 4: out->unsigned_value = dac.status(); break;
+    case 5: out->unsigned_value = dac.pan; break;
     }
     return SRH_OK;
 }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 
-constexpr uint64_t kStateSize = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 8 + 1 + 1 + 1 + kFifoCapacity;
+constexpr uint64_t kStateSize = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 8 + 1 + 1 + 1 + kFifoCapacity + 1;
 void put_u32(uint8_t *&p, uint32_t value) { for (unsigned i = 0; i < 4; ++i) *p++ = uint8_t(value >> (8 * i)); }
 uint32_t take_u32(const uint8_t *&p) { uint32_t value = 0; for (unsigned i = 0; i < 4; ++i) value |= uint32_t(*p++) << (8 * i); return value; }
 void put_u64(uint8_t *&p, uint64_t value) { for (unsigned i = 0; i < 8; ++i) *p++ = uint8_t(value >> (8 * i)); }
@@ -261,6 +270,7 @@ SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) 
     *p++ = dac.count; *p++ = (dac.underflow ? 1 : 0) | (dac.overflow ? 2 : 0);
     put_u32(p, dac.fifo_rate); put_u64(p, dac.phase); *p++ = dac.current; *p++ = dac.next;
     *p++ = dac.resampler_primed ? 1 : 0; std::memcpy(p, dac.fifo.data(), dac.fifo.size());
+    p += dac.fifo.size(); *p++ = dac.pan;
     *size = kStateSize;
     return SRH_OK;
 }
@@ -278,16 +288,17 @@ SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t s
     next.count = count; next.underflow = (flags & 1) != 0; next.overflow = (flags & 2) != 0;
     next.fifo_rate = rate; next.phase = phase; next.current = current; next.next = next_sample;
     next.resampler_primed = primed != 0; std::memcpy(next.fifo.data(), p, next.fifo.size());
+    p += next.fifo.size(); next.pan = *p;
     static_cast<Card *>(context)->dac = next;
     return SRH_OK;
 }
 
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "PCM DAC",
-    "8-bit unsigned PCM DAC with direct and programmable-rate 32-byte FIFO modes",
+    "8-bit unsigned PCM DAC with stereo balance and a programmable 32-byte FIFO",
     0xD0, kRegisterCount, 0, 0, 0, 0,
     R"({"sample_rate":44100,"stream_name":"PCM DAC"})", nullptr, nullptr,
     nullptr, 0};
-using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 2>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "dac", create, destroy, reset, property_count, property_info,
                     property_get, property_set, State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace

@@ -1,0 +1,510 @@
+{
+  "audio": {
+    "gain_db": 2.0
+  },
+  "cards": [
+    {
+      "base": 128,
+      "clock": 0,
+      "config": {
+        "chip_clock_hz": 4000000,
+        "sample_rate": 44100,
+        "stream_name": "YM2414"
+      },
+      "plugin": "ym2414",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 2,
+      "space": "vgm.io"
+    },
+    {
+      "base": 256,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm 1"
+      },
+      "name": "SegaPCM voice 01",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 264,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm 2"
+      },
+      "name": "SegaPCM voice 02",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 272,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm3"
+      },
+      "name": "SegaPCM voice 03",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 280,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm4"
+      },
+      "name": "SegaPCM voice 04",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 288,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm5"
+      },
+      "name": "SegaPCM voice 05",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 296,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm6"
+      },
+      "name": "SegaPCM voice 06",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 304,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm7"
+      },
+      "name": "SegaPCM voice 07",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 312,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm8"
+      },
+      "name": "SegaPCM voice 08",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 320,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm9"
+      },
+      "name": "SegaPCM voice 09",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 328,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm10"
+      },
+      "name": "SegaPCM voice 10",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 336,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm11"
+      },
+      "name": "SegaPCM voice 11",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 344,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm12"
+      },
+      "name": "SegaPCM voice 12",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 352,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm13"
+      },
+      "name": "SegaPCM voice 13",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 360,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm14"
+      },
+      "name": "SegaPCM voice 14",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 368,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm15"
+      },
+      "name": "SegaPCM voice 15",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 376,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "spcm16"
+      },
+      "name": "SegaPCM voice 16",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 6,
+      "space": "vgm.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "player.lua"
+      },
+      "plugin": "script",
+      "size": 1,
+      "space": "vgm.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "Replays YM2151 and 16 SegaPCM voices with a YM2414 and 16 DAC cards.",
+    "title": "Lua YM2151 + SegaPCM VGM"
+  },
+  "mixer": {
+    "master_volume": 100,
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "YM2414 VGM",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 134
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "SegaPCM voice 01",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 2,
+        "muted": false,
+        "name": "SegaPCM voice 02",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 3,
+        "muted": false,
+        "name": "SegaPCM voice 03",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 4,
+        "muted": false,
+        "name": "SegaPCM voice 04",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 5,
+        "muted": false,
+        "name": "SegaPCM voice 05",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 6,
+        "muted": false,
+        "name": "SegaPCM voice 06",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 7,
+        "muted": false,
+        "name": "SegaPCM voice 07",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 8,
+        "muted": false,
+        "name": "SegaPCM voice 08",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 9,
+        "muted": false,
+        "name": "SegaPCM voice 09",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 10,
+        "muted": false,
+        "name": "SegaPCM voice 10",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 11,
+        "muted": false,
+        "name": "SegaPCM voice 11",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 12,
+        "muted": false,
+        "name": "SegaPCM voice 12",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 13,
+        "muted": false,
+        "name": "SegaPCM voice 13",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 14,
+        "muted": false,
+        "name": "SegaPCM voice 14",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 15,
+        "muted": false,
+        "name": "SegaPCM voice 15",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 16,
+        "muted": false,
+        "name": "SegaPCM voice 16",
+        "ordinal": 0,
+        "volume": 40
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "spcm 1",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 2,
+        "muted": false,
+        "name": "spcm 2",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 3,
+        "muted": false,
+        "name": "spcm3",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 4,
+        "muted": false,
+        "name": "spcm4",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 5,
+        "muted": false,
+        "name": "spcm5",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 6,
+        "muted": false,
+        "name": "spcm6",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 7,
+        "muted": false,
+        "name": "spcm7",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 8,
+        "muted": false,
+        "name": "spcm8",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 9,
+        "muted": false,
+        "name": "spcm9",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 10,
+        "muted": false,
+        "name": "spcm10",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 11,
+        "muted": false,
+        "name": "spcm11",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 12,
+        "muted": false,
+        "name": "spcm12",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      },
+      {
+        "card": 0,
+        "muted": false,
+        "name": "YM2414",
+        "ordinal": 0,
+        "pan": 0,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "Lua YM2151 + SegaPCM VGM player",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "vgm.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "{\"schema\":1,\"sources\":{}}"
+  },
+  "version": 2
+}
