@@ -2,12 +2,15 @@
   "cards": [
     {
       "base": 128,
+      "clock": 0,
       "config": {
-        "chip_clock_hz": 3579545,
+        "chip_clock_hz": 4000000,
         "sample_rate": 44100,
         "stream_name": "YM2414 VGM"
       },
       "plugin": "ym2414",
+      "priority": 0,
+      "reset_vector": 0,
       "size": 2,
       "space": "vgm.io"
     },
