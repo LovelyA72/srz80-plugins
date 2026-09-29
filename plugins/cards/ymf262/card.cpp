@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <algorithm>
@@ -484,7 +485,7 @@ SrhStatus SRH_CALL set(void *c, uint32_t index, const SrhValue *in) {
     return srz80::sdk::guard([&]() { return set_impl(c, index, in); });
 }
 
-SrhStatus SRH_CALL save_state(void *c, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *c, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     constexpr uint64_t required = 2 + kRegisterCount;
@@ -503,7 +504,7 @@ SrhStatus SRH_CALL save_state(void *c, uint8_t *buffer, uint64_t *size) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *c, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *c, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = 2 + kRegisterCount;
     if (!buffer || size != required)
         return SRH_INVALID;
@@ -519,8 +520,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "YMF262
                                    "Yamaha YMF262 (OPL3) FM synthesizer", 0x388, 4, 0, 0, 0, 0,
                                    R"({"chip_clock_hz":14318180,"sample_rate":44100,"stream_name":"YMF262"})",
                                    nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ymf262", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

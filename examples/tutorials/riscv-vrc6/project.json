@@ -1,0 +1,86 @@
+{
+  "cards": [
+    {
+      "base": "0x4000",
+      "name": "Work RAM",
+      "plugin": "ram",
+      "priority": 0,
+      "size": "0x4000",
+      "space": "rv.memory"
+    },
+    {
+      "base": 0,
+      "image": "vrc6.rom",
+      "name": "",
+      "plugin": "rom",
+      "priority": 10,
+      "space": "rv.memory"
+    },
+    {
+      "clock": 0,
+      "name": "",
+      "plugin": "riscv",
+      "reset_vector": 0,
+      "space": "rv.memory"
+    },
+    {
+      "base": "0x10000000",
+      "clock": 0,
+      "config": {
+        "chip_clock_hz": 1789773,
+        "gain_milli": 500,
+        "sample_rate": 44100,
+        "stream_name": "VRC6"
+      },
+      "name": "",
+      "plugin": "vrc6",
+      "priority": 0,
+      "size": "0x2003",
+      "space": "rv.memory"
+    }
+  ],
+  "clocks": [
+    1789773,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A four-bar C major phrase played channel by channel at 240 bpm by an RV32I: pulse 1, pulse 2, then sawtooth.",
+    "title": "Middle C: RISC-V + VRC6"
+  },
+  "mixer": {
+    "sources": [
+      {
+        "card": 3,
+        "muted": false,
+        "name": "VRC6",
+        "ordinal": 0,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "VRC6 demo",
+  "rack_info": {
+    "author": "",
+    "notes": "Each channel plays the sixteen-slot phrase\nin turn.\n",
+    "thumbnail": "",
+    "version": ""
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFFFFFF",
+      "name": "rv.memory",
+      "resolver": "priority",
+      "unclaimed": 0
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

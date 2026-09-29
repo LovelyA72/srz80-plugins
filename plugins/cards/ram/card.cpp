@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <algorithm>
 #include <boundary.hpp>
 #include <cstring>
@@ -81,7 +82,7 @@ SrhStatus SRH_CALL get(void *, uint32_t, SrhValue *) {
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) {
     return SRH_NOT_FOUND;
 }
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     auto &bytes = static_cast<Ram *>(p)->bytes;
@@ -98,7 +99,7 @@ SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
     *size = bytes.size();
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     auto &bytes = static_cast<Ram *>(p)->bytes;
     if (size != bytes.size() || (!buffer && size))
         return SRH_INVALID;
@@ -109,8 +110,9 @@ SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Memory", "RAM",
                                    "Read/write memory", 0x1000, 256, 0, 0, 0, 0, "{}", nullptr,
                                    nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ram", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

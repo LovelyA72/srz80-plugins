@@ -1,0 +1,77 @@
+{
+  "cards": [
+    {
+      "base": 128,
+      "config": {
+        "chip_clock_hz": 3579545,
+        "sample_rate": 44100,
+        "stream_name": "Fur Elise"
+      },
+      "plugin": "ym2414",
+      "priority": 0,
+      "size": 2,
+      "space": "demo.io"
+    },
+    {
+      "base": 192,
+      "plugin": "lcd1602",
+      "priority": 0,
+      "size": 2,
+      "space": "demo.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "fur_elise.lua"
+      },
+      "name": "lua script",
+      "plugin": "script",
+      "priority": 0,
+      "size": 1,
+      "space": "demo.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Lua script card plays the opening of Fur Elise and shows each note on an LCD1602.",
+    "title": "Fur Elise on YM2414"
+  },
+  "mixer": {
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "Fur Elise",
+        "ordinal": 0,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "Lua card demo",
+  "rack_info": {
+    "author": "",
+    "notes": "",
+    "thumbnail": "",
+    "version": ""
+  },
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFFFF",
+      "name": "demo.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

@@ -1,0 +1,83 @@
+{
+  "cards": [
+    {
+      "base": 16,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "XM left"
+      },
+      "name": "Left PCM",
+      "plugin": "dac",
+      "size": 5,
+      "space": "xm.io"
+    },
+    {
+      "base": 32,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "XM right"
+      },
+      "name": "Right PCM",
+      "plugin": "dac",
+      "size": 5,
+      "space": "xm.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "xm_player.lua"
+      },
+      "name": "XM player",
+      "plugin": "script",
+      "size": 1,
+      "space": "xm.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Lua script mixes a 12-channel FastTracker XM to two hard-panned PCM DACs.",
+    "title": "Nostalgy — Lua XM player"
+  },
+  "mixer": {
+    "master_volume": 100,
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "XM left",
+        "ordinal": 0,
+        "pan": -41,
+        "volume": 100
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "XM right",
+        "ordinal": 0,
+        "pan": 40,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "Lua XM player",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFF",
+      "name": "xm.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

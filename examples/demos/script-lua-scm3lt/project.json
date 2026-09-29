@@ -1,0 +1,85 @@
+{
+  "cards": [
+    {
+      "base": 16,
+      "clock": 0,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "SCM3LT left"
+      },
+      "name": "SCM3LT left",
+      "plugin": "dac",
+      "priority": 0,
+      "reset_vector": 0,
+      "size": 5,
+      "space": "scm3lt.io"
+    },
+    {
+      "base": 32,
+      "config": {
+        "sample_rate": 44100,
+        "stream_name": "SCM3LT right"
+      },
+      "name": "SCM3LT right",
+      "plugin": "dac",
+      "size": 5,
+      "space": "scm3lt.io"
+    },
+    {
+      "base": 0,
+      "config": {
+        "main_file": "player.lua"
+      },
+      "plugin": "script",
+      "size": 1,
+      "space": "scm3lt.io"
+    }
+  ],
+  "clocks": [
+    0,
+    0,
+    0
+  ],
+  "epoch_ns": 0,
+  "metadata": {
+    "description": "A Lua script decodes M2's SCM3LT sequence and sample bank from DigiCommunication Nyo and mixes it live into stereo PCM DACs.",
+    "title": "SCM3LT album player (DigiCommunication Nyo)"
+  },
+  "mixer": {
+    "master_volume": 100,
+    "sources": [
+      {
+        "card": 0,
+        "muted": false,
+        "name": "SCM3LT left",
+        "ordinal": 0,
+        "pan": -64,
+        "volume": 100
+      },
+      {
+        "card": 1,
+        "muted": false,
+        "name": "SCM3LT right",
+        "ordinal": 0,
+        "pan": 63,
+        "volume": 100
+      }
+    ]
+  },
+  "name": "Lua SCM3LT player",
+  "seed": 1,
+  "spaces": [
+    {
+      "maximum": "0xFF",
+      "name": "scm3lt.io",
+      "unclaimed": 255
+    }
+  ],
+  "time_mode": "project",
+  "tool_state": {
+    "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"\",\"path\":\"\",\"schema\":1}",
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+  },
+  "version": 2
+}

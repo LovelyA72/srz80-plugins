@@ -5,6 +5,8 @@ endif()
 
 set(libasm_sources
   asm_base asm_z80 config_base reg_base reg_z80 table_z80 text_z80 text_common
+  asm_mc68000 reg_mc68000 table_mc68000 text_mc68000
+  asm_mos6502 reg_mos6502 table_mos6502 text_mos6502
   str_buffer str_scanner option_base error_reporter insn_base value value_parser
   parsers operators formatters value_formatter)
 add_library(srz80_libasm STATIC)
@@ -20,15 +22,15 @@ endif()
 set_target_properties(srz80_libasm PROPERTIES
   POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden CXX_STANDARD 14)
 
-add_library(srz80_assembler STATIC assembler.cpp)
-target_link_libraries(srz80_assembler PRIVATE srz80_libasm)
+add_library(srz80_assembler STATIC assembler.cpp source_model.cpp project_settings.cpp)
+target_link_libraries(srz80_assembler PRIVATE srz80_libasm nlohmann_json::nlohmann_json)
 target_include_directories(srz80_assembler PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
 set_target_properties(srz80_assembler PROPERTIES
   POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
 srz80_warnings(srz80_assembler)
 
 srz80_plugin(z80_assembler_tool KIND tool
-  SOURCES tool.cpp editor.cpp inline_editor.cpp source_model.cpp loader.cpp
+  SOURCES tool.cpp editor.cpp inline_editor.cpp loader.cpp
   OUTPUT cpu_z80_assembler
   LIBS srz80_imgui srz80_assembler)
 

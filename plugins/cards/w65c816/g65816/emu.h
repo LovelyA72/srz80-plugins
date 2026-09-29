@@ -44,20 +44,26 @@ public:
     virtual u32 page_address_bits() const { return 0; }
     virtual offs_t disassemble(std::ostream &, offs_t, const data_buffer &, const data_buffer &) { return 1; }
 };
-inline std::string string_format(const char *format, ...) {
+// MAME's util::string_format is type-safe. The disassembler passes std::string
+// to "%s" (the stack-relative addressing modes), and a C variadic would hand
+// std::snprintf the std::string object's raw bytes instead of its characters.
+// Every argument is therefore mapped explicitly to what printf expects.
+template <class T>
+const T &format_arg(const T &value) {
+    return value;
+}
+inline const char *format_arg(const std::string &value) { return value.c_str(); }
+
+template <class... Args>
+std::string string_format(const char *format, const Args &...args) {
     char buffer[128];
-    va_list args;
-    va_start(args, format);
-    std::vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
+    std::snprintf(buffer, sizeof(buffer), format, format_arg(args)...);
     return buffer;
 }
-inline void stream_format(std::ostream &stream, const char *format, ...) {
+template <class... Args>
+void stream_format(std::ostream &stream, const char *format, const Args &...args) {
     char buffer[128];
-    va_list args;
-    va_start(args, format);
-    std::vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
+    std::snprintf(buffer, sizeof(buffer), format, format_arg(args)...);
     stream << buffer;
 }
 } // namespace util

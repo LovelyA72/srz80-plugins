@@ -1,4 +1,7 @@
 {
+  "audio": {
+    "gain_db": 6.3
+  },
   "cards": [
     {
       "base": "0x4000",
@@ -98,7 +101,7 @@
     }
   ],
   "clocks": [
-    2000000,
+    3686400,
     0,
     0
   ],
@@ -114,7 +117,8 @@
         "muted": false,
         "name": "MU50 SWP00 Piano",
         "ordinal": 0,
-        "volume": 100
+        "pan": 0,
+        "volume": 150
       }
     ]
   },

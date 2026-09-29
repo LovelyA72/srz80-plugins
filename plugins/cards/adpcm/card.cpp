@@ -1,8 +1,9 @@
+#include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 #include "device.hpp"
 #include <cstring>
 #include <memory>
-#include <nlohmann/json.hpp>
 
 namespace {
 using srz80::adpcm::Device;
@@ -39,21 +40,24 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         std::string name = "ADPCM";
         uint32_t sample_rate = 44'100;
         if (srz80::sdk::has_field(config, &SrhConfig::config_json) && config->config_json) {
-            const auto json = nlohmann::json::parse(config->config_json, config->config_json + config->config_json_size,
-                                                   nullptr, false);
-            if (!json.is_object()) return SRH_INVALID;
-            for (auto it = json.begin(); it != json.end(); ++it)
-                if (it.key() != "stream_name" && it.key() != "sample_rate") return SRH_INVALID;
-            if (json.contains("stream_name")) {
-                if (!json["stream_name"].is_string()) return SRH_INVALID;
-                name = json["stream_name"].get<std::string>();
-            }
-            if (json.contains("sample_rate")) {
-                if (!json["sample_rate"].is_number_unsigned()) return SRH_INVALID;
-                const auto value = json["sample_rate"].get<uint64_t>();
-                if (value > UINT32_MAX) return SRH_INVALID;
-                sample_rate = static_cast<uint32_t>(value);
-            }
+            struct Settings { std::string *name; uint32_t *sample_rate; } settings{&name, &sample_rate};
+            const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+                auto &settings = *static_cast<Settings *>(opaque);
+                if (token.name == "stream_name")
+                    return token.type == srz80::sdk::json::Type::string &&
+                           bool(srz80::sdk::json::decode_string(token.value, *settings.name));
+                if (token.name == "sample_rate") {
+                    uint64_t value = 0;
+                    if (!srz80::sdk::json::unsigned_value(token, value) || value > UINT32_MAX) return false;
+                    *settings.sample_rate = static_cast<uint32_t>(value);
+                    return true;
+                }
+                return false;
+            };
+            if (config->config_json_size > SIZE_MAX ||
+                !srz80::sdk::json::object(
+                    {config->config_json, size_t(config->config_json_size)}, visit, &settings))
+                return SRH_INVALID;
         }
         if (name.empty() || name.size() > 256 || name.find('\0') != std::string::npos ||
             sample_rate < 8'000 || sample_rate > 192'000) return SRH_INVALID;
@@ -104,14 +108,13 @@ SrhStatus SRH_CALL get(void *c, uint32_t i, SrhValue *out) {
 }
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 // Fixed, versioned little-endian state; no native struct layout is persisted.
-constexpr uint64_t state_size = 4 + 13 * 4 + Device::register_count + Device::ram_size;
-SrhStatus SRH_CALL save(void *c, uint8_t *buffer, uint64_t *size) {
+constexpr uint64_t state_size = 13 * 4 + Device::register_count + Device::ram_size;
+SrhStatus SRH_CALL save_payload(void *c, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     if (!buffer) { *size = state_size; return SRH_OK; }
     if (*size < state_size) { *size = state_size; return SRH_UNAVAILABLE; }
     auto &d = static_cast<Card *>(c)->device;
-    std::memcpy(buffer, "ADP1", 4);
-    uint8_t *p = buffer + 4;
+    uint8_t *p = buffer;
     for (uint32_t value : {d.output_rate, d.start, d.length, d.rate, d.position, d.mode, d.phase,
                            uint32_t(d.predictor + 32768), uint32_t(d.index), uint32_t(d.sample + 32768),
                            uint32_t(d.playing), uint32_t(d.error), uint32_t(0)})
@@ -120,11 +123,11 @@ SrhStatus SRH_CALL save(void *c, uint8_t *buffer, uint64_t *size) {
     std::memcpy(p, d.ram.data(), d.ram.size());
     *size = state_size; return SRH_OK;
 }
-SrhStatus SRH_CALL load(void *c, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != state_size || std::memcmp(buffer, "ADP1", 4)) return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *c, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size != state_size) return SRH_INVALID;
     auto &d = static_cast<Card *>(c)->device;
     uint32_t v[13]{};
-    const uint8_t *p = buffer + 4;
+    const uint8_t *p = buffer;
     for (auto &value : v) for (unsigned b = 0; b < 4; ++b) value |= uint32_t(*p++) << (8 * b);
     if (v[0] != d.output_rate || v[4] > v[2] || v[6] >= d.output_rate || v[7] > 65535 ||
         v[8] > 88 || v[9] > 65535 || v[10] > 1 || v[11] > 1 || v[12]) return SRH_INVALID;
@@ -142,8 +145,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "ADPCM"
     "Single mono voice: DPCM, PCM4/8, IMA and G.711 mu-law; private 2 MiB RAM",
     0x1000, Device::register_count, 0, 0, 0, 0,
     R"({"sample_rate":44100,"stream_name":"ADPCM"})", nullptr, nullptr, slots, 1};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "adpcm", create, destroy, reset, count, info, get, set,
-                    save, load, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 }
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {
     return srz80::sdk::valid(host) ? &api : nullptr;

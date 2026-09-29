@@ -74,13 +74,12 @@ class NesApu {
     void set_sample_reader(bool (*reader)(void *context, uint16_t address, uint8_t *value),
                            void *context);
 
-    /* Fixed-layout, versioned, endian-independent image.  state_size() mirrors
+    /* Fixed-layout, endian-independent payload.  state_size() mirrors
        save_state byte for byte.  A false return from load_state leaves the live
        unit untouched. */
     static constexpr uint64_t state_size() {
-        /* Eight-byte tag, eight-byte layout version, the frame counter's fields,
-           then one record per channel.  This mirrors save_state byte for byte. */
-        return 8 + 8 + 8 + 2 + 2 * 24 + 12 + 21 + 23;
+        // Frame counter fields followed by one record per channel.
+        return 8 + 2 + 2 * 24 + 12 + 19 + 23;
     }
     void save_state(uint8_t *buffer) const;
     bool load_state(const uint8_t *buffer, uint64_t size);

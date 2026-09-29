@@ -1,5 +1,6 @@
 #include <boundary.hpp>
 #include <srz80/tool.h>
+#include <srz80/input.h>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 
@@ -234,10 +235,14 @@ struct Tool {
         if (root.is_discarded() || root.value("generation", uint64_t{}) != runtime.generation) return;
         providers.clear();
         for (const auto &provider : root["providers"]) {
-            if (provider.value("protocol", std::string()) != "srz80.keyboard.v1") continue;
+            if (provider.value("protocol", std::string()) != SRH_INPUT_PROTOCOL) continue;
             auto data = Json::parse(provider.value("data", std::string()), nullptr, false);
-            if (data.is_discarded() || data.value("schema", 0) != 1) continue;
-            providers.push_back({provider.value("owner", SrhHandle{}), provider.value("display_name", std::string("Keyboard")), data.value("endpoint", std::string()), std::move(data)});
+            if (!data.is_object() || !data.contains("schema") || data["schema"] != 1 ||
+                !data.contains("keyboard") || !data["keyboard"].is_object() ||
+                !data["keyboard"].contains("endpoint") || !data["keyboard"]["endpoint"].is_string()) continue;
+            const auto endpoint = data["keyboard"]["endpoint"].get<std::string>();
+            if (endpoint.empty() || endpoint.size() > 127 || endpoint.find('\0') != std::string::npos) continue;
+            providers.push_back({provider.value("owner", SrhHandle{}), provider.value("display_name", std::string("Keyboard")), endpoint, std::move(data)});
         }
         bundle = std::move(text); choose_default();
     }

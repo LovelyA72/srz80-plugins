@@ -1,5 +1,6 @@
+#include <state.hpp>
 #include <boundary.hpp>
-#include <nlohmann/json.hpp>
+#include <json.hpp>
 
 #include "x1_010/x1_010.hpp"
 
@@ -11,8 +12,6 @@
 #include <string>
 
 namespace {
-using Json = nlohmann::json;
-
 constexpr uint64_t kRegisterWindow = 0x2000;
 constexpr uint64_t kSampleMemorySize = 0x100000;
 constexpr uint32_t kDefaultClockHz = 16000000;
@@ -27,70 +26,45 @@ struct Settings {
     std::string stream_name = "X1-010";
 };
 
-bool read_unsigned(const Json &value, uint64_t &out) {
-    if (value.is_number_unsigned()) {
-        out = value.get<uint64_t>();
-        return true;
-    }
-    if (value.is_number_integer()) {
-        const auto number = value.get<int64_t>();
-        if (number < 0)
-            return false;
-        out = static_cast<uint64_t>(number);
-        return true;
-    }
-    if (!value.is_string())
-        return false;
-    const auto text = value.get<std::string>();
-    if (text.empty())
-        return false;
-    size_t position = 0;
-    try {
-        out = std::stoull(text, &position, 0);
-    } catch (...) {
-        return false;
-    }
-    return position == text.size();
-}
-
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json ||
         config->config_json_size == 0)
         return true;
-    const auto json = Json::parse(config->config_json,
-                                  config->config_json + config->config_json_size, nullptr, false);
-    if (json.is_discarded() || !json.is_object())
-        return false;
-    for (const auto &[key, value] : json.items()) {
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &value) noexcept {
+        auto &settings = *static_cast<Settings *>(opaque);
         uint64_t number = 0;
-        if (key == "chip_clock_hz") {
-            if (!read_unsigned(value, number) || number < 1000000 || number > 50000000)
+        if (value.name == "chip_clock_hz") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 1000000 || number > 50000000)
                 return false;
             settings.chip_clock_hz = static_cast<uint32_t>(number);
-        } else if (key == "sample_rate") {
-            if (!read_unsigned(value, number) || number < 8000 || number > 192000)
+        } else if (value.name == "sample_rate") {
+            if (!srz80::sdk::json::unsigned_value(value, number) || number < 8000 || number > 192000)
                 return false;
             settings.sample_rate = static_cast<uint32_t>(number);
-        } else if (key == "sample_base") {
-            if (!read_unsigned(value, settings.sample_base))
+        } else if (value.name == "sample_base") {
+            if (!srz80::sdk::json::unsigned_value(value, settings.sample_base))
                 return false;
-        } else if (key == "sample_space") {
-            if (!value.is_string())
+        } else if (value.name == "sample_space") {
+            if (value.type != srz80::sdk::json::Type::string ||
+                !srz80::sdk::json::decode_string(value.value, settings.sample_space))
                 return false;
-            settings.sample_space = value.get<std::string>();
             if (settings.sample_space.size() > 256)
                 return false;
-        } else if (key == "stream_name") {
-            if (!value.is_string())
+        } else if (value.name == "stream_name") {
+            if (value.type != srz80::sdk::json::Type::string ||
+                !srz80::sdk::json::decode_string(value.value, settings.stream_name))
                 return false;
-            settings.stream_name = value.get<std::string>();
             if (settings.stream_name.empty() || settings.stream_name.size() > 256)
                 return false;
         } else {
             return false;
         }
-    }
-    return settings.sample_base <= UINT64_MAX - (kSampleMemorySize - 1);
+        return true;
+    };
+    return config->config_json_size <= SIZE_MAX &&
+           srz80::sdk::json::object(
+               {config->config_json, size_t(config->config_json_size)}, visit, &settings) &&
+           settings.sample_base <= UINT64_MAX - (kSampleMemorySize - 1);
 }
 
 struct Card final : vgsound_emu::vgsound_emu_mem_intf {
@@ -260,7 +234,7 @@ SrhStatus SRH_CALL property_info(void *, uint32_t, SrhProperty *) { return SRH_N
 SrhStatus SRH_CALL property_get(void *, uint32_t, SrhValue *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_NOT_FOUND; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!context || !size)
         return SRH_INVALID;
     constexpr uint64_t required = sizeof(uint64_t) + x1_010_core::serialized_size;
@@ -273,20 +247,22 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         return SRH_UNAVAILABLE;
     }
     auto &card = *static_cast<Card *>(context);
-    std::memcpy(buffer, &card.clock_accum, sizeof(card.clock_accum));
+    srz80::sdk::state::put(buffer, card.clock_accum);
     card.chip.save_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size);
     *size = required;
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = sizeof(uint64_t) + x1_010_core::serialized_size;
     if (!context || !buffer || size != required)
         return SRH_INVALID;
     auto &card = *static_cast<Card *>(context);
-    if (!card.chip.load_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size))
+    const auto accumulator = srz80::sdk::state::get<uint64_t>(buffer);
+    if (accumulator >= uint64_t(card.sample_rate) * kChipTicksPerSample ||
+        !card.chip.load_state(buffer + sizeof(card.clock_accum), x1_010_core::serialized_size))
         return SRH_INVALID;
-    std::memcpy(&card.clock_accum, buffer, sizeof(card.clock_accum));
+    card.clock_accum = accumulator;
     card.sample_error = SRH_OK;
     return SRH_OK;
 }
@@ -308,9 +284,10 @@ const SrhCardDescriptor descriptor{
     nullptr,
     0};
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "x1_010", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

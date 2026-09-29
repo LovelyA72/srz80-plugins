@@ -21,10 +21,10 @@ enum SrhToolFlags {
     Srh_TOOL_PROJECT_STATE_TEXT = 1u << 1,
 };
 
-/* SrhToolFileHandler capability: the registered file is opaque binary data
+/* SrhToolTextFormat capability: the registered file is opaque binary data
    interpreted only by the registering tool. */
-enum SrhToolFileHandlerFlags {
-    SRH_FILE_HANDLER_BINARY = 1u << 0,
+enum SrhToolTextFormatFlags {
+    SRH_TEXT_FORMAT_BINARY = 1u << 0,
 };
 
 typedef struct SrhToolSpace {
@@ -41,15 +41,13 @@ typedef struct SrhToolMemorySegment {
     uint64_t size;
 } SrhToolMemorySegment;
 
-/* A tool may advertise a project-file extension and receive a selected file
-   from the host-owned project tree. Extensions omit the leading dot.
-   SRH_FILE_HANDLER_BINARY marks the handler as opening a non-text file: the
-   host then supplies only the path, with an empty text of size zero, and never
-   loads the file into the host's text editor or saves it back. */
+/* A tool may advertise a project text format. The host includes registered
+   formats in the project tree's New File menu, creates the selected file, and
+   passes its host-owned text document to the tool. Extensions omit the dot. */
 typedef SrhStatus(SRH_CALL *SrhToolProjectFileOpen)(void *context, const char *path,
                                                     const char *text, uint64_t size,
                                                     uint64_t cursor);
-typedef struct SrhToolFileHandler {
+typedef struct SrhToolTextFormat {
     SRH_HEADER;
     const char *plugin_id;
     const char *extension;
@@ -58,7 +56,7 @@ typedef struct SrhToolFileHandler {
     SrhToolProjectFileOpen open;
     /* Appended in SRH_ABI 1 (tail field, guarded by struct_size). */
     uint32_t flags;
-} SrhToolFileHandler;
+} SrhToolTextFormat;
 
 /* Active card description returned by the optional card-inspection service. */
 typedef struct SrhToolCard {
@@ -98,7 +96,7 @@ typedef struct SrhToolFileFilter {
     const char *patterns;
 } SrhToolFileFilter;
 
-/* Named input: at most 64 pending requests / 256 KiB per client; 64 KiB
+/* Named input: at most 64 pending requests / 256 KiB per client. 64 KiB
    per batch. UINT64_MAX timestamps at worker acceptance. release does not
    cancel a submitted operation. client is a stable tool-owned identity. */
 typedef struct SrhToolInputResult {
@@ -139,7 +137,7 @@ typedef struct SrhToolHostV1 {
     SrhStatus(SRH_CALL *load_memory_segments)(void *context, SrhHandle space,
         const SrhToolMemorySegment *segments, uint32_t segment_count,
         uint32_t reset_before_load, uint32_t *failed_segment, uint64_t *written);
-    /* The plugin supplies its own nonempty filter list; the host copies it
+    /* The plugin supplies its own nonempty filter list. The host copies it
        before starting the asynchronous native dialog. */
     SrhStatus(SRH_CALL *file_dialog_request)(void *context, uint32_t save,
         const SrhToolFileFilter *filters, uint32_t filter_count, SrhHandle *request);
@@ -153,7 +151,7 @@ typedef struct SrhToolHostV1 {
     SrhStatus(SRH_CALL *config_register)(void *context, const SrhConfigEntry *entry);
     SrhStatus(SRH_CALL *config_unregister)(void *context, void *entry_context);
     SrhStatus(SRH_CALL *config_get)(void *context, const char *key, char *value, uint32_t capacity);
-    /* Queues owned strings in controller order; SRH_OK is transport acceptance. */
+    /* Queues owned strings in controller order. SRH_OK is transport acceptance. */
     SrhStatus(SRH_CALL *config_set)(void *context, const char *key, const char *value);
     /* Card inspection service (appended in SRH_ABI 1, guarded by struct_size).
        Tools use these to discover active cards and inspect/edit their generic
@@ -181,9 +179,9 @@ typedef struct SrhToolHostV1 {
        convention applies: pass NULL to obtain the required size including
        the terminator.  Empty means that the rack has not been saved yet. */
     SrhStatus(SRH_CALL *project_root)(void *context, char *path, uint64_t *size);
-    SrhStatus(SRH_CALL *file_handler_register)(void *context, const SrhToolFileHandler *handler);
-    SrhStatus(SRH_CALL *file_handler_unregister)(void *context, void *handler_context);
-    SrhStatus(SRH_CALL *project_file_update)(void *context, void *handler_context,
+    SrhStatus(SRH_CALL *text_format_register)(void *context, const SrhToolTextFormat *format);
+    SrhStatus(SRH_CALL *text_format_unregister)(void *context, void *handler_context);
+    SrhStatus(SRH_CALL *project_text_update)(void *context, void *handler_context,
         const char *path, const char *text, uint64_t size, uint64_t cursor);
     SrhStatus(SRH_CALL *input_submit)(void *, void *client, uint64_t generation, uint64_t identity, SrhHandle endpoint_owner,
         const char *endpoint, uint64_t time_ns, const uint8_t *, uint64_t size, SrhHandle *request);

@@ -6,4 +6,4 @@ srz80_warnings(ymw258_engine)
 srz80_plugin(ymw258 KIND card
   SOURCES card.cpp
   OUTPUT audio_ymw258
-  LIBS ymw258_engine nlohmann_json::nlohmann_json)
+  LIBS ymw258_engine srz80_json)

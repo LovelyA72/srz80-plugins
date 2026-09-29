@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <algorithm>
 #include <array>
 #include <boundary.hpp>
@@ -361,47 +362,39 @@ uint32_t SRH_CALL count(void *) { return 0; }
 SrhStatus SRH_CALL info(void *, uint32_t, SrhProperty *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL get(void *, uint32_t, SrhValue *) { return SRH_NOT_FOUND; }
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_NOT_FOUND; }
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     const auto &v = *static_cast<Video *>(p);
     // Preserve the displayed field separately from pending VRAM writes.
     const uint64_t required = 16 + v.bytes.size() + v.pixels.size();
     if (!buffer) { *size = required; return SRH_OK; }
     if (*size < required) { *size = required; return SRH_UNAVAILABLE; }
-    std::memcpy(buffer, &v.frame_number, 8);
-    std::memcpy(buffer + 8, &v.clock_remainder, 8);
+    srz80::sdk::state::put(buffer, v.frame_number);
+    srz80::sdk::state::put(buffer + 8, v.clock_remainder);
     std::memcpy(buffer + 16, v.bytes.data(), v.bytes.size());
     std::memcpy(buffer + 16 + v.bytes.size(), v.pixels.data(), v.pixels.size());
     *size = required;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     auto &v = *static_cast<Video *>(p);
-    if (!buffer) return SRH_INVALID;
-    if (size == v.bytes.size()) { // legacy VRAM-only snapshots
-        std::memcpy(v.bytes.data(), buffer, v.bytes.size());
-        v.frame_number = v.clock_remainder = 0;
-        std::fill(v.dirty_cells.begin(), v.dirty_cells.end(), 1);
-        v.refresh();
-    } else {
-        if (size != 16 + v.bytes.size() + v.pixels.size()) return SRH_INVALID;
-        uint64_t remainder = 0;
-        std::memcpy(&remainder, buffer + 8, 8);
-        if (remainder >= 60000) return SRH_INVALID;
-        std::memcpy(&v.frame_number, buffer, 8);
-        v.clock_remainder = remainder;
-        std::memcpy(v.bytes.data(), buffer + 16, v.bytes.size());
-        std::memcpy(v.pixels.data(), buffer + 16 + v.bytes.size(), v.pixels.size());
-        std::fill(v.dirty_cells.begin(), v.dirty_cells.end(), 1);
-    }
+    if (!buffer || size != 16 + v.bytes.size() + v.pixels.size()) return SRH_INVALID;
+    const auto remainder = srz80::sdk::state::get<uint64_t>(buffer + 8);
+    if (remainder >= 60000) return SRH_INVALID;
+    v.frame_number = srz80::sdk::state::get<uint64_t>(buffer);
+    v.clock_remainder = remainder;
+    std::memcpy(v.bytes.data(), buffer + 16, v.bytes.size());
+    std::memcpy(v.pixels.data(), buffer + 16 + v.bytes.size(), v.pixels.size());
+    std::fill(v.dirty_cells.begin(), v.dirty_cells.end(), 1);
     return SRH_OK;
 }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Video", "Text video",
                                    "Host-backed text video surface", 0x8000, 4096, 0, 0, 0, 0,
                                    R"({"width":80,"height":25,"fg":"0xFFFFFF","bg":"0x000000"})",
                                    nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "video", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

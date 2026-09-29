@@ -1,4 +1,5 @@
 #pragma once
+#include "target.hpp"
 #include <value_parser.h>
 #include <cctype>
 #include <limits>
@@ -6,6 +7,8 @@ namespace srz80::assembler {
 // The pinned NOFLOAT Value arithmetic wraps at 32 bits. Keep its parser and
 // precedence, but reject arithmetic overflow before performing the operation.
 struct CheckedOperators final : libasm::OperatorParser {
+    explicit CheckedOperators(const libasm::OperatorParser &base) : base(base) {}
+    const libasm::OperatorParser &base;
     using V=libasm::Value;
     using Stack=libasm::ValueStack;
     using Context=libasm::ParserContext;
@@ -48,11 +51,12 @@ struct CheckedOperators final : libasm::OperatorParser {
         const bool low_or_high=name.iequals_P(PSTR("LOW")) || name.iequals_P(PSTR("HIGH"));
         const bool low_or_high_word=name.iequals_P(PSTR("LOW16")) || name.iequals_P(PSTR("HIGH16"));
         const bool logical_not=name.iequals_P(PSTR("LNOT"));
-        if ((low_or_high || low_or_high_word || logical_not) && (*p=='_' || *p=='?')) return nullptr;
-        return libasm::ZilogOperatorParser::singleton().readPrefix(s,v,c);
+        if (&base == &libasm::ZilogOperatorParser::singleton() &&
+            (low_or_high || low_or_high_word || logical_not) && (*p=='_' || *p=='?')) return nullptr;
+        return base.readPrefix(s,v,c);
     }
     const libasm::Operator *readInfix(libasm::StrScanner &s,Stack &v,Context &c) const override {
-        auto op=libasm::ZilogOperatorParser::singleton().readInfix(s,v,c);
+        auto op=base.readInfix(s,v,c);
         using O=libasm::Operator;
         static const O add(6,O::LEFT,2,arithmetic<'+'>), sub(6,O::LEFT,2,arithmetic<'-'>),
                        mul(5,O::LEFT,2,arithmetic<'*'>), shift(7,O::LEFT,2,arithmetic<'<'>);
@@ -68,22 +72,43 @@ struct CheckedOperators final : libasm::OperatorParser {
 // supported by this tool, and E4/E5 are entirely valid Z80 symbols (and
 // common note names), so let the normal symbol lookup handle tokens which
 // did not begin with an integer.
-struct Z80NumberParser final : libasm::NumberParser {
+struct IntegerNumberParser final : libasm::NumberParser {
+    explicit IntegerNumberParser(const libasm::NumberParser &base) : base(base) {}
+    const libasm::NumberParser &base;
     libasm::Error parseNumber(libasm::StrScanner &scan, libasm::Value &value,
                                libasm::Radix radix) const override {
-        return libasm::IntelNumberParser::singleton().parseNumber(scan, value, radix);
+        return base.parseNumber(scan, value, radix);
     }
     libasm::Error parseFloat(libasm::StrScanner &scan, const libasm::StrScanner &tail,
                              libasm::Value &value, libasm::Error integer_error,
                              char delimiter) const override {
         if (integer_error == libasm::NOT_AN_EXPECTED)
             return libasm::NOT_AN_EXPECTED;
-        return libasm::IntelNumberParser::singleton().parseFloat(scan, tail, value, integer_error,
+        return base.parseFloat(scan, tail, value, integer_error,
                                                                    delimiter);
     }
 };
-struct CheckedPlugins final : libasm::ValueParser::IntelPlugins {
-    const libasm::NumberParser &number() const override { static const Z80NumberParser p; return p; }
-    const libasm::OperatorParser &operators() const override {static const CheckedOperators p;return p;}
+struct CheckedPlugins final : libasm::ValueParser::Plugins {
+    explicit CheckedPlugins(Target target) : target(target),
+        numbers(target == Target::z80
+            ? static_cast<const libasm::NumberParser &>(libasm::IntelNumberParser::singleton())
+            : libasm::MotorolaNumberParser::singleton()),
+        ops(target == Target::z80
+            ? static_cast<const libasm::OperatorParser &>(libasm::ZilogOperatorParser::singleton())
+            : libasm::CStyleOperatorParser::singleton()) {}
+    Target target;
+    IntegerNumberParser numbers;
+    CheckedOperators ops;
+    const libasm::NumberParser &number() const override { return numbers; }
+    const libasm::OperatorParser &operators() const override { return ops; }
+    const libasm::SymbolParser &symbol() const override {
+        if (target == Target::z80) return libasm::IntelSymbolParser::singleton();
+        if (target == Target::mc68000) return libasm::Mc68000SymbolParser::singleton();
+        return libasm::MostekSymbolParser::singleton();
+    }
+    const libasm::LetterParser &letter() const override {
+        if (target == Target::w65c816 || target == Target::w65c02) return libasm::MostekLetterParser::singleton();
+        return Plugins::letter();
+    }
 };
 }

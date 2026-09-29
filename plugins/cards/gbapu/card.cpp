@@ -1,3 +1,5 @@
+#include <state.hpp>
+#include "gb_state.hpp"
 #include <boundary.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -370,32 +372,27 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
     }
     return SRH_INVALID;
 }
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
-    if (!size)
-        return SRH_INVALID;
-    constexpr uint64_t required = sizeof(GB_gameboy_t);
-    if (!buffer) {
-        *size = required;
-        return SRH_OK;
-    }
-    if (*size < required) {
-        *size = required;
-        return SRH_UNAVAILABLE;
-    }
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     auto &apu = *static_cast<GbApu *>(context);
-    std::memcpy(buffer, apu.gb.get(), required);
-    *size = required;
-    return SRH_OK;
+    auto staged = *apu.gb;
+    srz80::sdk::state::Writer writer;
+    writer(apu.cycle_accum);
+    archive_gb(writer, staged);
+    return srz80::sdk::state::copy_payload(writer.bytes, buffer, size);
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != sizeof(GB_gameboy_t))
-        return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     auto &apu = *static_cast<GbApu *>(context);
-    std::memcpy(apu.gb.get(), buffer, sizeof(GB_gameboy_t));
-    apu.gb->apu_output.sample_callback = nullptr;
-    GB_set_sample_rate(apu.gb.get(), apu.sample_rate);
-    GB_set_highpass_filter_mode(apu.gb.get(), apu.highpass_mode);
-    apu.cycle_accum = 0;
+    auto staged = *apu.gb;
+    uint64_t accumulator = 0;
+    srz80::sdk::state::Reader reader({buffer, static_cast<size_t>(size)});
+    reader(accumulator);
+    archive_gb(reader, staged);
+    if (!reader.finished() || accumulator >= apu.sample_rate || staged.model != apu.model ||
+        staged.apu_output.sample_rate != apu.sample_rate ||
+        staged.apu_output.highpass_mode != apu.highpass_mode || !valid_gb_state(staged))
+        return SRH_INVALID;
+    *apu.gb = staged;
+    apu.cycle_accum = accumulator;
     return SRH_OK;
 }
 
@@ -404,8 +401,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "Game B
                                    0, 0, 0,
                                    R"({"sample_rate":44100,"stream_name":"GB APU","model":"dmg","highpass_mode":"off"})",
                                    nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "gbapu", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

@@ -4,12 +4,13 @@ A Yamaha V9938 video display processor for the rack, ported from the MAME 0.289
 `v9938` device. It maps four IO ports, generates its own raster, drives the rack's
 `IRQ` signal, and publishes a 544x626 RGBA8 video surface.
 The surface also exposes card-owned scanout timing through `host.video.v1`:
-frame number, next scanline and PAL/NTSC line count. The GUI transports these
-values with the captured pixels; it never advances the raster. Card state version
-3 preserves the frame counter and active command progress. It accepts versions
-1/2 with an idle command unit; version 1 starts at frame zero. The corrected
-state size includes the address latch. Old 192 KiB states that omitted their
-last two VRAM bytes restore those bytes as zero.
+frame number, next scanline and PAL/NTSC line count. The card latches the image
+and timing at vblank. The next field can draw without changing what the GUI reads.
+Interlace keeps the other field in the scanout buffer.
+
+Snapshots use payload version 2. They store both the live scanout and published
+image so loading mid-frame restores interlace correctly. Older snapshots are
+rejected.
 
 ```json
 {"plugin": "vdp", "space": "cpu0.io", "base": "0x98", "size": 4, "clock": 0,

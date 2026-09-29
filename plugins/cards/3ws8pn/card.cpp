@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include "device.hpp"
 #include <cstring>
@@ -47,7 +48,7 @@ void SRH_CALL destroy(void*c){delete static_cast<Card*>(c);} SrhStatus SRH_CALL 
 constexpr uint32_t pc=8*5; const char* suffix[] = {"Frequency","Waveform","Volume","Pan","LastSample"};
 uint32_t SRH_CALL count(void*){return pc;} SrhStatus SRH_CALL info(void*,uint32_t i,SrhProperty*o){if(!o||i>=pc)return SRH_INVALID;static thread_local char n[32],g[32];auto c=i/5,f=i%5;std::snprintf(n,sizeof(n),"C%02u.%s",c,suffix[f]);std::snprintf(g,sizeof(g),"Channel %u",c+1);*o={SRH_INIT(SrhProperty),n,g,n,SRH_UNSIGNED,f==0?16u:(f==4?16u:8u),f==0?10u:16u,0,nullptr,SRH_PROPERTY_RUNTIME|SRH_PROPERTY_HIDE_UI};return SRH_OK;}
 SrhStatus SRH_CALL get(void*c,uint32_t i,SrhValue*o){if(!o||i>=pc)return SRH_INVALID;auto &x=static_cast<Card*>(c)->d.ch[i/5];auto f=i%5;o->unsigned_value=f==0?x.frequency:f==1?x.type:f==2?x.volume:f==3?x.pan:x.last;return SRH_OK;} SrhStatus SRH_CALL set(void*,uint32_t,const SrhValue*){return SRH_INVALID;}
-SrhStatus SRH_CALL save(void*,uint8_t*,uint64_t*s){if(!s)return SRH_INVALID;*s=0;return SRH_OK;} SrhStatus SRH_CALL load(void*,const uint8_t*,uint64_t s){return s?SRH_INVALID:SRH_OK;}
+SrhStatus SRH_CALL save_payload(void*,uint8_t*,uint64_t*s){if(!s)return SRH_INVALID;*s=0;return SRH_OK;} SrhStatus SRH_CALL load_payload(void*,const uint8_t*,uint64_t s){return s?SRH_INVALID:SRH_OK;}
 const SrhCardDescriptor desc{
     SRH_INIT(SrhCardDescriptor),
     "Audio",
@@ -64,7 +65,8 @@ const SrhCardDescriptor desc{
     nullptr,
     nullptr,
     0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "3ws8pn", create, destroy, reset, count, info, get, set,
-                    save, load, &desc, nullptr, nullptr};
+                    State::save, State::load, &desc, nullptr, nullptr};
 }
 extern "C" SRH_EXPORT const SrhPlugin* SRH_CALL srz80_plugin_init(const ShouryoHost*h){return srz80::sdk::valid(h)?&api:nullptr;}

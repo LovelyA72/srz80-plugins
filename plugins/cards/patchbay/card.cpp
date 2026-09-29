@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <srz80/providers.h>
 #include "engine.hpp"
 #include "publication.hpp"
@@ -152,12 +153,12 @@ SrhStatus SRH_CALL reset(void *p, uint32_t) {
         return SRH_OK;
     });
 }
-SrhStatus SRH_CALL save(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&] {
         return copy(static_cast<Card *>(p)->engine.save().dump(), reinterpret_cast<char *>(buffer), size);
     });
 }
-SrhStatus SRH_CALL load(void *p, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!buffer || !size || size > SRH_PROVIDER_MAX_BYTES || buffer[size - 1] != 0)
             return SRH_INVALID;
@@ -224,6 +225,7 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),
                                    "{}",
                                    nullptr,
                                    nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin),
                     "patchbay",
                     create,
@@ -233,8 +235,8 @@ const SrhPlugin api{SRH_INIT(SrhPlugin),
                     [](void *, uint32_t, SrhProperty *) -> SrhStatus { return SRH_NOT_FOUND; },
                     [](void *, uint32_t, SrhValue *) -> SrhStatus { return SRH_NOT_FOUND; },
                     [](void *, uint32_t, const SrhValue *) -> SrhStatus { return SRH_NOT_FOUND; },
-                    save,
-                    load,
+                    State::save,
+                    State::load,
                     &descriptor, save_project, load_project};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *) {

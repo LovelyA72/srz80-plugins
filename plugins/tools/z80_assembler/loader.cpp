@@ -12,7 +12,7 @@ std::string load(const SrhToolHostV1 &host, SrhHandle space, const SourceModel &
     std::string message="Load failed (status "+std::to_string(status)+") after "+std::to_string(written)+" completed writes";
     if(failed<segments.size()) {
         uint64_t earlier=0; for(uint32_t i=0;i<failed;++i) earlier+=segments[i].size;
-        char address[32]; std::snprintf(address,sizeof(address),"%04llX",static_cast<unsigned long long>(segments[failed].address+(written>=earlier?written-earlier:0)));
+        char address[32]; std::snprintf(address,sizeof(address),"%0*llX",target_info(source.target).address_digits(),static_cast<unsigned long long>(segments[failed].address+(written>=earlier?written-earlier:0)));
         message+="; segment "+std::to_string(failed+1)+", address "+address;
     }
     return message+=". A failing transaction may have side effects; no rollback was attempted.";

@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <nlohmann/json.hpp>
 
@@ -13,7 +14,7 @@ constexpr uint64_t kControlSize = 0x6000;
 constexpr uint64_t kMaximumRomBanks = 512;
 constexpr uint64_t kMaximumRamBanks = 16;
 constexpr uint64_t kMaximumBackingSize = 64 * 1024 * 1024;
-constexpr size_t kStateHeaderSize = 16;
+constexpr size_t kStateHeaderSize = 8;
 
 struct Range {
     uint64_t first = 0;
@@ -272,7 +273,7 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) {
 
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     const auto &mbc = *static_cast<Mbc5 *>(context);
@@ -285,30 +286,26 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
         *size = required;
         return SRH_UNAVAILABLE;
     }
-    std::memset(buffer, 0, kStateHeaderSize);
-    std::memcpy(buffer, "MBC5", 4);
-    buffer[4] = 1;
-    buffer[5] = mbc.ram_enabled ? 1 : 0;
-    buffer[6] = static_cast<uint8_t>(mbc.rom_bank);
-    buffer[7] = static_cast<uint8_t>(mbc.rom_bank >> 8);
-    buffer[8] = mbc.ram_bank;
-    store_u32(buffer + 12, static_cast<uint32_t>(mbc.ram.size()));
+    buffer[0] = mbc.ram_enabled ? 1 : 0;
+    buffer[1] = static_cast<uint8_t>(mbc.rom_bank);
+    buffer[2] = static_cast<uint8_t>(mbc.rom_bank >> 8);
+    buffer[3] = mbc.ram_bank;
+    store_u32(buffer + 4, static_cast<uint32_t>(mbc.ram.size()));
     if (!mbc.ram.empty())
         std::memcpy(buffer + kStateHeaderSize, mbc.ram.data(), mbc.ram.size());
     *size = required;
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     auto &mbc = *static_cast<Mbc5 *>(context);
     if (!buffer || size != kStateHeaderSize + mbc.ram.size() ||
-        std::memcmp(buffer, "MBC5", 4) != 0 || buffer[4] != 1 || buffer[5] > 1 ||
-        buffer[7] > 1 || buffer[8] > 0x0f || buffer[9] || buffer[10] || buffer[11] ||
-        load_u32(buffer + 12) != mbc.ram.size())
+        buffer[0] > 1 || buffer[2] > 1 || buffer[3] > 0x0f ||
+        load_u32(buffer + 4) != mbc.ram.size())
         return SRH_INVALID;
-    const uint16_t new_rom_bank = static_cast<uint16_t>(buffer[6] | (buffer[7] << 8));
-    const uint8_t new_ram_bank = buffer[8];
-    const bool new_ram_enabled = buffer[5] != 0;
+    const uint16_t new_rom_bank = static_cast<uint16_t>(buffer[1] | (buffer[2] << 8));
+    const uint8_t new_ram_bank = buffer[3];
+    const bool new_ram_enabled = buffer[0] != 0;
     if (!mbc.ram.empty())
         std::memcpy(mbc.ram.data(), buffer + kStateHeaderSize, mbc.ram.size());
     mbc.rom_bank = new_rom_bank;
@@ -323,9 +320,10 @@ const SrhCardDescriptor descriptor{
     SRH_CARD_REQUIRES_IMAGE,
     R"({"rom_range":[0,32767],"ram_range":[40960,49151],"ram_banks":16})", nullptr,
     nullptr, nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "mbc5", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

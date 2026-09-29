@@ -1,3 +1,4 @@
+#include <state.hpp>
 // F1440 removable block-storage card.
 //
 // The card is a bus slave for its register block and a bus master while it
@@ -1245,13 +1246,12 @@ SrhStatus SRH_CALL reset(void *p, uint32_t) {
     });
 }
 
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size)
             return SRH_INVALID;
         auto &floppy = *static_cast<Floppy *>(p);
-        const auto text = Json{{"schema", 1},
-                               {"regs", floppy.regs},
+        const auto text = Json{{"regs", floppy.regs},
                                {"sequence", floppy.sequence},
                                {"completed", floppy.completed},
                                {"media_changed", floppy.media_changed},
@@ -1274,24 +1274,34 @@ SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
     });
 }
 
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!p || !buffer || !size || size > 4 * 1024 * 1024)
             return SRH_INVALID;
         auto &floppy = *static_cast<Floppy *>(p);
         const auto state = Json::parse(buffer, buffer + size, nullptr, false);
-        if (state.is_discarded() || state.value("schema", 0) != 1 || !state.contains("regs") ||
+        if (state.is_discarded() || !state.is_object() || !state.contains("regs") ||
             !state["regs"].is_array() || state["regs"].size() != floppy.regs.size() ||
             !state.contains("staged") || !state["staged"].is_array() ||
             state["staged"].size() != floppy.stage.size())
             return SRH_INVALID;
         std::array<uint8_t, kRegisterEnd> regs{};
-        for (size_t index = 0; index < regs.size(); ++index)
+        for (size_t index = 0; index < regs.size(); ++index) {
+            if (!state["regs"][index].is_number_unsigned() || state["regs"][index].get<uint64_t>() > 255)
+                return SRH_INVALID;
             regs[index] = state["regs"][index].get<uint8_t>();
+        }
         std::array<uint8_t, kMaxTransfer> staged{};
-        for (size_t index = 0; index < staged.size(); ++index)
+        for (size_t index = 0; index < staged.size(); ++index) {
+            if (!state["staged"][index].is_number_unsigned() || state["staged"][index].get<uint64_t>() > 255)
+                return SRH_INVALID;
             staged[index] = state["staged"][index].get<uint8_t>();
-        const auto staged_bytes = state.value("staged_bytes", uint64_t(0));
+        }
+        for (const char *key : {"staged_bytes", "sequence", "completed"})
+            if (!state.contains(key) || !state[key].is_number_unsigned()) return SRH_INVALID;
+        for (const char *key : {"media_changed", "irq_pending"})
+            if (!state.contains(key) || !state[key].is_boolean()) return SRH_INVALID;
+        const auto staged_bytes = state.at("staged_bytes").get<uint64_t>();
         if (staged_bytes > kMaxTransfer)
             return SRH_INVALID;
         floppy.regs = regs;
@@ -1494,9 +1504,10 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),
                                    nullptr,
                                    0};
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "floppy", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor, save_project_data, load_project_data};
+                    State::save, State::load, &descriptor, save_project_data, load_project_data};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

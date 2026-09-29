@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <capstone/capstone.h>
 
@@ -566,82 +567,68 @@ SrhStatus SRH_CALL property_set(void *p, uint32_t index, const SrhValue *in) {
     return SRH_OK;
 }
 
-struct PackedState {
-    uint32_t pc;
-    uint32_t registers[32];
+struct CpuState {
+    riscv_bare_state_t hart;
     uint64_t instructions;
-    uint8_t halted;
-};
-static_assert(std::is_trivially_copyable_v<PackedState>);
-struct PackedStateV2 {
-    PackedState cpu;
     uint32_t ticks_until_batch;
 };
-struct PackedStateV3 {
-    PackedStateV2 cpu;
-    uint32_t floating_registers[32];
-    uint32_t fcsr;
-};
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
-    if (!size)
-        return SRH_INVALID;
-    if (!buffer) {
-        *size = sizeof(PackedStateV3);
-        return SRH_OK;
-    }
-    if (*size < sizeof(PackedStateV3)) {
-        *size = sizeof(PackedStateV3);
-        return SRH_UNAVAILABLE;
-    }
-    const auto &cpu = *static_cast<Cpu *>(p);
-    PackedStateV3 packed{};
-    auto &state = packed.cpu.cpu;
-    state.pc = rv_get_pc(cpu.rv);
-    for (uint32_t i = 0; i < 32; ++i)
-        state.registers[i] = rv_get_reg(cpu.rv, i);
-    state.instructions = cpu.instructions;
-    state.halted = (cpu.halted || rv_has_halted(cpu.rv)) ? 1 : 0;
-    packed.cpu.ticks_until_batch = cpu.ticks_until_batch;
-    for (uint32_t i = 0; i < 32; ++i)
-        packed.floating_registers[i] = rv_get_freg(cpu.rv, i);
-    packed.fcsr = rv_get_fcsr(cpu.rv);
-    std::memcpy(buffer, &packed, sizeof(packed));
-    *size = sizeof(packed);
-    return SRH_OK;
+template <class Archive> void archive_state(Archive &ar, CpuState &s) {
+    auto &h = s.hart;
+    ar.fields(h.pc, h.registers,
+#if RV32_HAS(EXT_F)
+              h.floating_registers, h.fcsr,
+#endif
+#if RV32_HAS(EXT_V)
+              h.vector_registers, h.vcsr, h.vl, h.vtype, h.vstart, h.vxsat, h.vxrm, h.csr_vlenb,
+#endif
+#if RV32_HAS(SYSTEM)
+              h.last_csr_sepc, h.timer_offset, h.is_trapped,
+#endif
+              h.timer, h.cycle, h.time,
+              h.mstatus, h.mtvec, h.misa, h.mtval, h.mcause, h.mscratch, h.mepc, h.mip,
+              h.mie, h.mideleg, h.medeleg, h.mvendorid, h.marchid, h.mimpid, h.mbadaddr,
+              h.sstatus, h.stvec, h.sip, h.sie, h.scounteren, h.sscratch, h.sepc, h.scause,
+              h.stval, h.satp, h.privilege_mode, h.compressed, h.halted,
+              s.instructions, s.ticks_until_batch);
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || (size != sizeof(PackedState) && size != sizeof(PackedStateV2) &&
-                    size != sizeof(PackedStateV3)))
-        return SRH_INVALID;
-    PackedStateV3 packed{};
-    std::memcpy(&packed, buffer, size);
-    const auto &state = packed.cpu.cpu;
-    if ((state.pc & 3) != 0 || state.halted > 1 || packed.cpu.ticks_until_batch > 65598)
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
+    const auto &cpu = *static_cast<Cpu *>(p);
+    CpuState state{};
+    if (!rv_save_bare_state(cpu.rv, &state.hart))
+        return SRH_ERROR;
+    state.hart.halted = (cpu.halted || state.hart.halted) ? 1 : 0;
+    state.instructions = cpu.instructions;
+    state.ticks_until_batch = cpu.ticks_until_batch;
+    srz80::sdk::state::Writer writer;
+    archive_state(writer, state);
+    return srz80::sdk::state::copy_payload(writer.bytes, buffer, size);
+}
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
+    CpuState state{};
+    srz80::sdk::state::Reader reader({buffer, static_cast<size_t>(size)});
+    archive_state(reader, state);
+    if (!reader.finished() || state.ticks_until_batch > 65598)
         return SRH_INVALID;
     auto &cpu = *static_cast<Cpu *>(p);
-    if (!rv_reset_bare(cpu.rv, state.pc))
-        return SRH_ERROR;
-    for (uint32_t i = 1; i < 32; ++i)
-        rv_set_reg(cpu.rv, i, state.registers[i]);
+    if (!rv_load_bare_state(cpu.rv, &state.hart))
+        return SRH_INVALID;
+    const auto irq_status = cpu.refresh_irq();
+    if (irq_status != SRH_OK)
+        return irq_status;
+    rv_set_machine_external_interrupt(cpu.rv, cpu.irq_asserted);
     cpu.instructions = state.instructions;
-    cpu.ticks_until_batch = packed.cpu.ticks_until_batch;
-    if (size == sizeof(PackedStateV3)) {
-        for (uint32_t i = 0; i < 32; ++i)
-            rv_set_freg(cpu.rv, i, packed.floating_registers[i]);
-        rv_set_fcsr(cpu.rv, packed.fcsr);
-    }
-    cpu.halted = state.halted != 0;
-    if (cpu.halted)
-        rv_halt(cpu.rv);
+    cpu.ticks_until_batch = state.ticks_until_batch;
+    cpu.halted = state.hart.halted != 0;
     return SRH_OK;
 }
 
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "CPU", "RISC-V RV32IMF",
                                    "Bare-metal RV32IMF processor", 0, 0, 0, 0, 0,
                                    SRH_CARD_SHOW_CLOCK, R"({"isa":"rv32imf"})", nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 2>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "riscv", create, destroy, reset,
                     property_count, property_info, property_get, property_set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

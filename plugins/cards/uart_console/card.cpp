@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 #include <cstdint>
 #include <cstring>
@@ -348,7 +349,7 @@ SrhStatus SRH_CALL get(void *p, uint32_t index, SrhValue *out) {
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) {
     return SRH_INVALID;
 }
-SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *p, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     auto &u = *static_cast<Uart *>(p);
@@ -367,9 +368,9 @@ SrhStatus SRH_CALL save_state(void *p, uint8_t *buffer, uint64_t *size) {
     *size = required;
     return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *p, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *p, const uint8_t *buffer, uint64_t size) {
     auto &u = *static_cast<Uart *>(p);
-    if (size == 0 || !buffer || size > u.tx_capacity + 1)
+    if (size == 0 || !buffer || size > u.tx_capacity + 1 || buffer[size - 1] > 1)
         return SRH_INVALID;
     u.transcript.assign(buffer, buffer + size - 1);
     u.overflow = buffer[size - 1] != 0;
@@ -379,8 +380,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "I/O", "UART con
                                    "Byte-oriented console endpoint", 0x80, 2, 0x80, 0, 0, 0,
                                    R"({"base":128,"endpoint":"uart0.rx","transcript_capacity":65536})",
                                    nullptr, "base"};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "uart_console", create, destroy, reset,
-                    count,         info,          get,    set,           save_state, load_state,
+                    count,         info,          get,    set,           State::save, State::load,
                     &descriptor};
 } // namespace
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

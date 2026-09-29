@@ -6,9 +6,9 @@
    out of the machine's own address space.
 
    The unit follows the register behaviour published in the NESdev reference.
-   Timing inside the unit is expressed in console CPU cycles; the APU cycle is
-   half of one, so the frame sequencer and the envelope dividers step on every
-   second clock while the channel timers step on every clock. */
+   Timing inside the unit is expressed in console CPU cycles. The APU cycle
+   spans two CPU cycles; the frame sequencer counts APU cycles, and envelope
+   dividers advance only on its quarter-frame events. */
 
 namespace nesapu {
 namespace {
@@ -48,10 +48,9 @@ constexpr uint8_t kLengthTable[32] = {10,  254, 20, 2,  40, 4,  80,  6,  160, 8,
                                       10,  14,  12, 26, 14, 12, 16,  24, 18,  48, 20,
                                       96,  22,  192, 24, 72, 26, 16, 28, 32,  30};
 
-/* Duty patterns in the order $4000 bits 7-6 select them.  The last two entries
-   are the complemented forms; the second pulse channel reads those two in the
-   opposite order, which is a console quirk. */
-constexpr uint8_t kDutyPattern[8] = {0x01, 0x03, 0x0F, 0xFC, 0x01, 0x0F, 0x03, 0xFC};
+/* Both pulse channels use the same four duty ratios.  The extra entries keep
+   the channel identity encoded in Pulse::duty for the sweep subtractor. */
+constexpr uint8_t kDutyPattern[8] = {0x01, 0x03, 0x0F, 0xFC, 0x01, 0x03, 0x0F, 0xFC};
 
 constexpr uint8_t kTrianglePattern[32] = {15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,
                                           4,  3,  2,  1,  0,  0,  1,  2,  3,  4,  5,
@@ -73,8 +72,6 @@ const uint16_t *delta_periods(Region region) {
    then a fixed field order.  Only the field order has to survive a version bump;
    every value is written byte-wise, low byte first, so the image does not depend
    on the host's word size or byte order. */
-constexpr uint8_t kStateTag[8] = {'N', 'E', 'S', 'A', 'P', 'U', '2', 'A'};
-constexpr uint64_t kStateVersion = 1;
 
 void put16(uint8_t *out, uint16_t value) {
     out[0] = static_cast<uint8_t>(value);
@@ -82,10 +79,6 @@ void put16(uint8_t *out, uint16_t value) {
 }
 uint16_t get16(const uint8_t *in) {
     return static_cast<uint16_t>(in[0] | (static_cast<uint16_t>(in[1]) << 8));
-}
-void put64(uint8_t *out, uint64_t value) {
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        out[byte] = static_cast<uint8_t>(value >> (byte * 8));
 }
 
 } // namespace
@@ -110,10 +103,12 @@ void NesApu::power_on() {
     triangle_.step = 7;
     noise_ = Noise{};
     noise_.period = noise_periods(region_)[0];
-    noise_.countdown = noise_.period;
+    noise_.countdown = static_cast<uint16_t>(noise_.period - 1u);
     delta_ = Delta{};
     delta_.period = delta_periods(region_)[0];
-    delta_.countdown = delta_.period;
+    delta_.countdown = static_cast<uint16_t>(delta_.period - 1u);
+    delta_.remaining = 0;
+    delta_.stopped = true;
 
     frame_count_ = 0;
     /* The first clock advances into step one, so the sequence runs
@@ -180,6 +175,8 @@ void NesApu::write_pulse(Pulse &pulse, uint32_t index, uint8_t value) {
     pulse.envelope.loop = pulse.length.halt;
     pulse.envelope.constant = (value & 0x10u) != 0;
     pulse.envelope.divider = static_cast<uint8_t>(value & 0x0Fu);
+    pulse.envelope.volume = pulse.envelope.constant ? pulse.envelope.divider : pulse.envelope.decay;
+    refresh_pulse(pulse);
 }
 
 void NesApu::load_pulse_length(Pulse &pulse, uint8_t value) {
@@ -245,6 +242,9 @@ void NesApu::write(uint32_t offset, uint8_t value) {
         noise_.envelope.loop = noise_.length.halt;
         noise_.envelope.constant = (value & 0x10u) != 0;
         noise_.envelope.divider = static_cast<uint8_t>(value & 0x0Fu);
+        noise_.envelope.volume = noise_.envelope.constant ? noise_.envelope.divider
+                                                           : noise_.envelope.decay;
+        refresh_noise();
         break;
     case 0x0E:
         noise_.mode = (value & 0x80u) != 0;
@@ -278,10 +278,8 @@ void NesApu::write(uint32_t offset, uint8_t value) {
         for (uint32_t channel = 0; channel < 4; ++channel) {
             Length &length = length_of(channel);
             const bool enabled = (value & kChannelBit[channel]) != 0;
-            /* Enabling a silent counter loads entry zero; disabling always
-               silences the channel and loses its count. */
-            if (enabled && !length.enabled && length.value == 0)
-                length.value = kLengthTable[0];
+            /* Enabling permits a later length-register write to load the
+               counter; it does not invent a length of its own. */
             length.enabled = enabled;
             if (!enabled)
                 length.value = 0;
@@ -290,9 +288,9 @@ void NesApu::write(uint32_t offset, uint8_t value) {
         if (!delta_.enabled) {
             delta_.remaining = 0;
             delta_.stopped = true;
-        } else if (delta_.stopped) {
-            /* Starting a sample when the unit was idle sets the address and the
-               byte count from the programmed sample and begins fetching. */
+        } else if (delta_.stopped || delta_.remaining == 0) {
+            /* A write with bit 4 set restarts an exhausted sample using the
+               programmed address and length. */
             delta_.address = delta_.start;
             delta_.remaining = delta_.length;
             delta_.stopped = false;
@@ -346,9 +344,8 @@ void NesApu::clock() {
         frame_step_ = five_step_ ? 4 : 3;
     }
 
-    /* The APU cycle is half a CPU cycle, so the frame sequencer and the three
-       envelope dividers advance on every second clock.  The step lengths are
-       published in CPU cycles, so each step lasts half as many APU cycles. */
+    /* The frame sequencer counts APU cycles, one for every two CPU cycles.
+       Its step lengths are published in CPU cycles. */
     divider_ ^= 1u;
     if (divider_ == 0) {
         const uint16_t step_cycles =
@@ -357,15 +354,14 @@ void NesApu::clock() {
             frame_count_ = 0;
             clock_frame_sequencer();
         }
-        clock_envelope(pulses_[0].envelope);
-        clock_envelope(pulses_[1].envelope);
-        clock_envelope(noise_.envelope);
     }
 
-    /* A programmed period of zero is a one-cycle period, so the counter runs
-       down from the programmed value and clocks on reaching zero. */
-    clock_pulse(pulses_[0]);
-    clock_pulse(pulses_[1]);
+    /* Pulse timers run at the APU rate, once per two CPU cycles.  The
+       triangle, noise, and delta periods below are in CPU cycles. */
+    if (divider_ == 0) {
+        clock_pulse(pulses_[0]);
+        clock_pulse(pulses_[1]);
+    }
 
     /* The triangle advances its sequence only while the length counter and the
        linear counter are both non-zero; otherwise it holds its position, which
@@ -381,21 +377,19 @@ void NesApu::clock() {
 
     if (noise_.countdown == 0) {
         /* The register is fifteen bits wide and the feedback lands on bit
-           fourteen, so the shift discards bit fourteen rather than bit fifteen
-           of the stored value.  The short sequence takes its second tap from bit
-           six instead of bit one. */
-        const uint16_t tap = noise_.mode ? static_cast<uint16_t>(noise_.shift >> 1)
-                                         : static_cast<uint16_t>(noise_.shift >> 6);
+           fourteen.  Normal mode uses bit one; short mode uses bit six. */
+        const uint16_t tap = noise_.mode ? static_cast<uint16_t>(noise_.shift >> 6)
+                                         : static_cast<uint16_t>(noise_.shift >> 1);
         const uint16_t feedback = static_cast<uint16_t>((noise_.shift ^ tap) & 1u);
         noise_.shift = static_cast<uint16_t>(((noise_.shift >> 1) | (feedback << 14)) & 0x7FFFu);
-        noise_.countdown = noise_.period;
+        noise_.countdown = static_cast<uint16_t>(noise_.period - 1u);
         refresh_noise();
     } else {
         --noise_.countdown;
     }
 
     if (delta_.countdown == 0) {
-        delta_.countdown = delta_.period;
+        delta_.countdown = static_cast<uint16_t>(delta_.period - 1u);
         if (!delta_.silent) {
             if ((delta_.shift & 1u) != 0) {
                 if (delta_.output < 126)
@@ -488,9 +482,12 @@ void NesApu::clock_frame_sequencer() {
 }
 
 void NesApu::clock_quarter_frame() {
-    pulses_[0].envelope.start = true;
-    pulses_[1].envelope.start = true;
-    noise_.envelope.start = true;
+    clock_envelope(pulses_[0].envelope);
+    clock_envelope(pulses_[1].envelope);
+    clock_envelope(noise_.envelope);
+    refresh_pulse(pulses_[0]);
+    refresh_pulse(pulses_[1]);
+    refresh_noise();
     /* The reload flag wins over the decrement, and the control flag keeps the
        counter loaded; the control flag is only cleared when the length halt
        flag is clear. */
@@ -593,9 +590,10 @@ void NesApu::clock_sweep(Pulse &pulse) {
 }
 
 void NesApu::refresh_triangle() {
-    triangle_.output = (triangle_.length.value != 0 && triangle_.linear != 0)
-                           ? kTrianglePattern[triangle_.step & 0x1Fu]
-                           : 0u;
+    /* The triangle DAC holds its last level when either counter silences the
+       sequencer; forcing zero here creates a spurious edge at note release. */
+    if (triangle_.length.value != 0 && triangle_.linear != 0)
+        triangle_.output = kTrianglePattern[triangle_.step & 0x1Fu];
 }
 
 void NesApu::refresh_noise() {
@@ -622,11 +620,6 @@ uint32_t NesApu::channel_output(uint32_t channel) const {
 
 void NesApu::save_state(uint8_t *buffer) const {
     uint8_t *out = buffer;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        out[byte] = kStateTag[byte];
-    out += 8;
-    put64(out, kStateVersion);
-    out += 8;
     *out++ = static_cast<uint8_t>(region_);
     *out++ = frame_step_;
     *out++ = divider_;
@@ -727,16 +720,12 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     if (buffer == nullptr || size != state_size())
         return false;
     const uint8_t *in = buffer;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        if (in[byte] != kStateTag[byte])
-            return false;
-    in += 8;
-    uint64_t version = 0;
-    for (uint32_t byte = 0; byte < 8; ++byte)
-        version |= static_cast<uint64_t>(in[byte]) << (byte * 8);
-    in += 8;
-    if (version != kStateVersion)
-        return false;
+    bool valid_bools = true;
+    const auto read_bool = [&] {
+        const auto value = *in++;
+        valid_bools = valid_bools && value <= 1;
+        return value != 0;
+    };
 
     /* The image is decoded into a staged unit first, so an image that turns out
        to be malformed is rejected without disturbing anything that is live. */
@@ -745,9 +734,9 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.frame_step_ = *in++;
     staged.divider_ = *in++;
     staged.reset_delay_ = *in++;
-    staged.five_step_ = *in++ != 0;
-    staged.length_clocked_ = *in++ != 0;
-    staged.irq_inhibit_ = *in++ != 0;
+    staged.five_step_ = read_bool();
+    staged.length_clocked_ = read_bool();
+    staged.irq_inhibit_ = read_bool();
     staged.status_ = *in++;
     staged.frame_count_ = get16(in);
     in += 2;
@@ -768,20 +757,20 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
         pulse.duty = *in++;
         pulse.step = *in++;
         pulse.output = *in++;
-        pulse.started = *in++ != 0;
-        pulse.length.halt = *in++ != 0;
-        pulse.length.enabled = *in++ != 0;
+        pulse.started = read_bool();
+        pulse.length.halt = read_bool();
+        pulse.length.enabled = read_bool();
         pulse.length.value = *in++;
-        pulse.envelope.start = *in++ != 0;
-        pulse.envelope.loop = *in++ != 0;
-        pulse.envelope.constant = *in++ != 0;
+        pulse.envelope.start = read_bool();
+        pulse.envelope.loop = read_bool();
+        pulse.envelope.constant = read_bool();
         pulse.envelope.divider = *in++;
         pulse.envelope.countdown = *in++;
         pulse.envelope.decay = *in++;
         pulse.envelope.volume = *in++;
-        pulse.sweep.enabled = *in++ != 0;
-        pulse.sweep.negate = *in++ != 0;
-        pulse.sweep.reload = *in++ != 0;
+        pulse.sweep.enabled = read_bool();
+        pulse.sweep.negate = read_bool();
+        pulse.sweep.reload = read_bool();
         pulse.sweep.divider = *in++;
         pulse.sweep.countdown = *in++;
         pulse.sweep.shift = *in++;
@@ -801,9 +790,9 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.triangle_.output = *in++;
     staged.triangle_.linear = *in++;
     staged.triangle_.reload = *in++;
-    staged.triangle_.control = *in++ != 0;
-    staged.triangle_.length.halt = *in++ != 0;
-    staged.triangle_.length.enabled = *in++ != 0;
+    staged.triangle_.control = read_bool();
+    staged.triangle_.length.halt = read_bool();
+    staged.triangle_.length.enabled = read_bool();
     staged.triangle_.length.value = *in++;
     if (staged.triangle_.step > 31 || staged.triangle_.output > 15 ||
         staged.triangle_.reload > 127 || staged.triangle_.linear > 127 ||
@@ -817,14 +806,14 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.noise_.shift = get16(in);
     in += 2;
     staged.noise_.rate = *in++;
-    staged.noise_.mode = *in++ != 0;
+    staged.noise_.mode = read_bool();
     staged.noise_.output = *in++;
-    staged.noise_.length.halt = *in++ != 0;
-    staged.noise_.length.enabled = *in++ != 0;
+    staged.noise_.length.halt = read_bool();
+    staged.noise_.length.enabled = read_bool();
     staged.noise_.length.value = *in++;
-    staged.noise_.envelope.start = *in++ != 0;
-    staged.noise_.envelope.loop = *in++ != 0;
-    staged.noise_.envelope.constant = *in++ != 0;
+    staged.noise_.envelope.start = read_bool();
+    staged.noise_.envelope.loop = read_bool();
+    staged.noise_.envelope.constant = read_bool();
     staged.noise_.envelope.divider = *in++;
     staged.noise_.envelope.countdown = *in++;
     staged.noise_.envelope.decay = *in++;
@@ -832,8 +821,9 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     if (staged.noise_.rate > 15 || staged.noise_.shift == 0 || staged.noise_.output > 15 ||
         (staged.noise_.shift >> 15) != 0 || staged.noise_.envelope.divider > 15 ||
         staged.noise_.envelope.countdown > 15 || staged.noise_.envelope.decay > 15 ||
-        staged.noise_.envelope.volume > 15 || staged.noise_.period > 0x7FF ||
-        staged.noise_.countdown > 0x7FF)
+        staged.noise_.envelope.volume > 15 ||
+        staged.noise_.period != noise_periods(staged.region_)[staged.noise_.rate] ||
+        staged.noise_.countdown > staged.noise_.period)
         return false;
 
     staged.delta_.countdown = get16(in);
@@ -853,15 +843,17 @@ bool NesApu::load_state(const uint8_t *buffer, uint64_t size) {
     staged.delta_.shift = *in++;
     staged.delta_.bits = *in++;
     staged.delta_.buffer = *in++;
-    staged.delta_.buffered = *in++ != 0;
-    staged.delta_.silent = *in++ != 0;
-    staged.delta_.loop = *in++ != 0;
-    staged.delta_.irq_enabled = *in++ != 0;
-    staged.delta_.enabled = *in++ != 0;
-    staged.delta_.stopped = *in++ != 0;
+    staged.delta_.buffered = read_bool();
+    staged.delta_.silent = read_bool();
+    staged.delta_.loop = read_bool();
+    staged.delta_.irq_enabled = read_bool();
+    staged.delta_.enabled = read_bool();
+    staged.delta_.stopped = read_bool();
     if (staged.delta_.rate > 15 || (staged.delta_.output & 0x80u) != 0 || staged.delta_.bits == 0 ||
         staged.delta_.bits > 8 || staged.delta_.period > 0x7FF || staged.delta_.countdown > 0x7FF)
         return false;
+
+    if (!valid_bools || in != buffer + size) return false;
 
     pulses_[0] = staged.pulses_[0];
     pulses_[1] = staged.pulses_[1];

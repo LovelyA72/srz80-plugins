@@ -4,6 +4,7 @@
 // Yamaha SWP00, rompler/dsp combo
 
 #include "swp00.h"
+#include <state.hpp>
 
 #include <bit>
 #include <memory>
@@ -2347,52 +2348,19 @@ template<class Archive> void Engine::archive(Archive &ar) {
 }
 
 namespace {
-uint32_t state_checksum(std::span<const uint8_t> bytes) {
-    uint32_t hash = 2166136261u;
-    for (uint8_t byte : bytes) hash = (hash ^ byte) * 16777619u;
-    return hash;
-}
-struct Writer {
-    std::vector<uint8_t> bytes{0x53, 0x57, 0x50, 1};
-    template<class T> void operator()(T &v) {
-        if constexpr (std::is_integral_v<T>) {
-            const uint64_t bits = static_cast<uint64_t>(v);
-            for (size_t i = 0; i < sizeof(T); ++i) bytes.push_back(uint8_t(bits >> (i * 8)));
-        } else { for (auto &x : v) (*this)(x); }
-    }
-};
-struct Reader {
-    std::span<const uint8_t> bytes;
-    size_t pos = 4;
-    bool valid = true;
-    template<class T> void operator()(T &v) {
-        if constexpr (std::is_integral_v<T>) {
-            if (pos + sizeof(T) > bytes.size()) { valid = false; return; }
-            uint64_t bits = 0;
-            for (size_t i = 0; i < sizeof(T); ++i) bits |= uint64_t(bytes[pos++]) << (i * 8);
-            if constexpr (std::is_same_v<T, bool>) { if (bits > 1) valid = false; v = bits != 0; }
-            else v = static_cast<T>(bits);
-        } else { for (auto &x : v) (*this)(x); }
-    }
-};
+using srz80::sdk::state::Writer;
+using srz80::sdk::state::Reader;
 }
 std::vector<uint8_t> Engine::save_state() const {
     Writer writer;
     const_cast<Engine *>(this)->archive(writer);
-    auto checksum = state_checksum(writer.bytes);
-    writer(checksum);
     return std::move(writer.bytes);
 }
 bool Engine::load_state(std::span<const uint8_t> bytes) {
-    if (bytes.size() < 8 || bytes[0] != 0x53 || bytes[1] != 0x57 || bytes[2] != 0x50 || bytes[3] != 1) return false;
-    uint32_t checksum = 0;
-    for (size_t i = 0; i < 4; ++i) checksum |= uint32_t(bytes[bytes.size() - 4 + i]) << (8 * i);
-    bytes = bytes.first(bytes.size() - 4);
-    if (checksum != state_checksum(bytes)) return false;
     auto candidate = std::make_unique<Engine>(*this);
     Reader reader{bytes};
     candidate->archive(reader);
-    if (!reader.valid || reader.pos != bytes.size()) return false;
+    if (!reader.finished()) return false;
     for (const auto &e : candidate->m_envelope)
         if ((e.m_envelope_mode != 0 && e.m_envelope_mode != 2 && e.m_envelope_mode != 3) ||
             e.m_envelope_level < 0 || e.m_envelope_level > 0xfff) return false;

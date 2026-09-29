@@ -1,3 +1,4 @@
+#include <state.hpp>
 #include <boundary.hpp>
 
 #include <algorithm>
@@ -510,7 +511,7 @@ SrhStatus SRH_CALL set(void *context, uint32_t index, const SrhValue *in) {
     return srz80::sdk::guard([&]() { return set_impl(context, index, in); });
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size)
         return SRH_INVALID;
     constexpr uint64_t required = kRegisterCount + sizeof(uint64_t);
@@ -524,19 +525,21 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     }
     auto &card = *static_cast<SidCard *>(context);
     std::memcpy(buffer, card.registers.data(), kRegisterCount);
-    std::memcpy(buffer + kRegisterCount, &card.cycle_accum, sizeof(card.cycle_accum));
+    srz80::sdk::state::put(buffer + kRegisterCount, card.cycle_accum);
     *size = required;
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     constexpr uint64_t required = kRegisterCount + sizeof(uint64_t);
     if (!buffer || size != required)
         return SRH_INVALID;
     auto &card = *static_cast<SidCard *>(context);
+    const auto accumulator = srz80::sdk::state::get<uint64_t>(buffer + kRegisterCount);
+    if (accumulator >= card.sample_rate) return SRH_INVALID;
     card.reset();
     std::memcpy(card.registers.data(), buffer, kRegisterCount);
-    std::memcpy(&card.cycle_accum, buffer + kRegisterCount, sizeof(card.cycle_accum));
+    card.cycle_accum = accumulator;
     card.restore_registers();
     return SRH_OK;
 }
@@ -546,8 +549,9 @@ const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "SID",
                                    0,
                                    R"({"chip_clock_hz":985248,"sample_rate":44100,"model":"8580","stream_name":"SID"})",
                                    nullptr, nullptr};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "sid", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor};
+                    State::save, State::load, &descriptor};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

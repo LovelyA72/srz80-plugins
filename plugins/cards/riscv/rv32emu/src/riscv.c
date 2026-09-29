@@ -895,6 +895,13 @@ static void rv_reset_bare_hart(riscv_t *rv, riscv_word_t pc)
     rv->timer = 0;
     rv->priv_mode = RV_PRIV_M_MODE;
     rv->csr_cycle = 0;
+#if RV32_HAS(SYSTEM)
+    rv->is_trapped = false;
+    rv->last_csr_sepc = 0;
+    rv->timer_offset = 0;
+    memset(rv->dtlb, 0, sizeof(rv->dtlb));
+    memset(rv->itlb, 0, sizeof(rv->itlb));
+#endif
     rv->csr_time[0] = 0;
     rv->csr_time[1] = 0;
     rv->csr_mstatus = 0;
@@ -989,6 +996,159 @@ bool rv_reset_bare(riscv_t *rv, riscv_word_t pc)
         memset(rv->step_cache, 0,
                STEP_CACHE_SIZE * sizeof(*rv->step_cache));
     rv_reset_bare_hart(rv, pc);
+    return true;
+}
+
+bool rv_save_bare_state(const riscv_t *rv, riscv_bare_state_t *state)
+{
+    if (!rv || !rv->bare_mode || !state)
+        return false;
+
+    memset(state, 0, sizeof(*state));
+    state->pc = rv->PC;
+    memcpy(state->registers, rv->X, sizeof(state->registers));
+#if RV32_HAS(EXT_F)
+    for (uint32_t i = 0; i < N_RV_REGS; ++i)
+        state->floating_registers[i] = rv->F[i].v;
+    state->fcsr = rv->csr_fcsr;
+#endif
+    state->timer = rv->timer;
+    state->cycle = rv->csr_cycle;
+    state->time[0] = rv->csr_time[0];
+    state->time[1] = rv->csr_time[1];
+    state->mstatus = rv->csr_mstatus;
+    state->mtvec = rv->csr_mtvec;
+    state->misa = rv->csr_misa;
+    state->mtval = rv->csr_mtval;
+    state->mcause = rv->csr_mcause;
+    state->mscratch = rv->csr_mscratch;
+    state->mepc = rv->csr_mepc;
+    state->mip = rv->csr_mip;
+    state->mie = rv->csr_mie;
+    state->mideleg = rv->csr_mideleg;
+    state->medeleg = rv->csr_medeleg;
+    state->mvendorid = rv->csr_mvendorid;
+    state->marchid = rv->csr_marchid;
+    state->mimpid = rv->csr_mimpid;
+    state->mbadaddr = rv->csr_mbadaddr;
+    state->sstatus = rv->csr_sstatus;
+    state->stvec = rv->csr_stvec;
+    state->sip = rv->csr_sip;
+    state->sie = rv->csr_sie;
+    state->scounteren = rv->csr_scounteren;
+    state->sscratch = rv->csr_sscratch;
+    state->sepc = rv->csr_sepc;
+    state->scause = rv->csr_scause;
+    state->stval = rv->csr_stval;
+    state->satp = rv->csr_satp;
+    state->privilege_mode = rv->priv_mode;
+#if RV32_HAS(EXT_V)
+    memcpy(state->vector_registers, rv->V, sizeof(state->vector_registers));
+    state->vcsr = rv->csr_vcsr;
+    state->vl = rv->csr_vl;
+    state->vtype = rv->csr_vtype;
+    state->vstart = rv->csr_vstart;
+    state->vxsat = rv->csr_vxsat;
+    state->vxrm = rv->csr_vxrm;
+    state->csr_vlenb = rv->csr_vlenb;
+#endif
+#if RV32_HAS(SYSTEM)
+    state->last_csr_sepc = rv->last_csr_sepc;
+    state->timer_offset = rv->timer_offset;
+    state->is_trapped = rv->is_trapped ? 1 : 0;
+#endif
+    state->compressed = rv->compressed ? 1 : 0;
+    state->halted = rv->halt ? 1 : 0;
+    return true;
+}
+
+bool rv_load_bare_state(riscv_t *rv, const riscv_bare_state_t *state)
+{
+    if (!rv || !rv->bare_mode || !state || state->registers[rv_reg_zero] != 0 ||
+        state->privilege_mode > RV_PRIV_M_MODE ||
+        (state->privilege_mode != RV_PRIV_U_MODE && state->privilege_mode != RV_PRIV_S_MODE &&
+         state->privilege_mode != RV_PRIV_M_MODE) || state->compressed > 1 || state->halted > 1 ||
+#if RV32_HAS(EXT_C)
+        (state->pc & 1) != 0
+#else
+        (state->pc & 3) != 0
+#endif
+#if RV32_HAS(EXT_F)
+        || (state->fcsr & ~0xffU)
+#endif
+#if RV32_HAS(SYSTEM)
+        || state->is_trapped > 1
+#endif
+    )
+        return false;
+
+#if RV32_HAS(JIT)
+    rv_bare_jit_destroy(rv);
+#else
+    block_map_clear(rv);
+#endif
+    if (rv->step_cache)
+        memset(rv->step_cache, 0, STEP_CACHE_SIZE * sizeof(*rv->step_cache));
+
+    memcpy(rv->X, state->registers, sizeof(rv->X));
+    rv->X[rv_reg_zero] = 0;
+#if RV32_HAS(EXT_F)
+    for (uint32_t i = 0; i < N_RV_REGS; ++i)
+        rv->F[i].v = state->floating_registers[i];
+    rv->csr_fcsr = state->fcsr;
+#endif
+    rv->PC = state->pc;
+    rv->timer = state->timer;
+    rv->csr_cycle = state->cycle;
+    rv->csr_time[0] = state->time[0];
+    rv->csr_time[1] = state->time[1];
+    rv->csr_mstatus = state->mstatus;
+    rv->csr_mtvec = state->mtvec;
+    rv->csr_misa = state->misa;
+    rv->csr_mtval = state->mtval;
+    rv->csr_mcause = state->mcause;
+    rv->csr_mscratch = state->mscratch;
+    rv->csr_mepc = state->mepc;
+    rv->csr_mip = state->mip;
+    rv->csr_mie = state->mie;
+    rv->csr_mideleg = state->mideleg;
+    rv->csr_medeleg = state->medeleg;
+    rv->csr_mvendorid = state->mvendorid;
+    rv->csr_marchid = state->marchid;
+    rv->csr_mimpid = state->mimpid;
+    rv->csr_mbadaddr = state->mbadaddr;
+    rv->csr_sstatus = state->sstatus;
+    rv->csr_stvec = state->stvec;
+    rv->csr_sip = state->sip;
+    rv->csr_sie = state->sie;
+    rv->csr_scounteren = state->scounteren;
+    rv->csr_sscratch = state->sscratch;
+    rv->csr_sepc = state->sepc;
+    rv->csr_scause = state->scause;
+    rv->csr_stval = state->stval;
+    rv->csr_satp = state->satp;
+    rv->priv_mode = state->privilege_mode;
+#if RV32_HAS(EXT_V)
+    memcpy(rv->V, state->vector_registers, sizeof(rv->V));
+    rv->csr_vcsr = state->vcsr;
+    rv->csr_vl = state->vl;
+    rv->csr_vtype = state->vtype;
+    rv->csr_vstart = state->vstart;
+    rv->csr_vxsat = state->vxsat;
+    rv->csr_vxrm = state->vxrm;
+    rv->csr_vlenb = state->csr_vlenb;
+#endif
+#if RV32_HAS(SYSTEM)
+    rv->last_csr_sepc = state->last_csr_sepc;
+    rv->timer_offset = state->timer_offset;
+    rv->is_trapped = state->is_trapped != 0;
+#endif
+    rv->compressed = state->compressed != 0;
+    rv->halt = state->halted != 0;
+#if RV32_HAS(SYSTEM)
+    memset(rv->dtlb, 0, sizeof(rv->dtlb));
+    memset(rv->itlb, 0, sizeof(rv->itlb));
+#endif
     return true;
 }
 
@@ -1166,7 +1326,24 @@ static void rv_reset_hart(riscv_t *rv, riscv_word_t pc)
     rv->timer_offset = 0;
 #endif
 
-    rv->csr_misa |= MISA_SUPER | MISA_USER;
+    rv->csr_misa = MISA_SUPER | MISA_USER;
+#if !RV32_HAS(RV32E)
+    rv->csr_misa |= MISA_I;
+#else
+    rv->csr_misa |= MISA_E;
+#endif
+#if RV32_HAS(EXT_A)
+    rv->csr_misa |= MISA_A;
+#endif
+#if RV32_HAS(EXT_C)
+    rv->csr_misa |= MISA_C;
+#endif
+#if RV32_HAS(EXT_F)
+    rv->csr_misa |= MISA_F;
+#endif
+#if RV32_HAS(EXT_M)
+    rv->csr_misa |= MISA_M;
+#endif
     rv->csr_mvendorid = RV_MVENDORID;
     rv->csr_marchid = RV_MARCHID;
     rv->csr_mimpid = RV_MIMPID;

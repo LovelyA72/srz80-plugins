@@ -82,11 +82,11 @@ worth an explicit check and a line in the card README either way.
 
 ### B. Video readback cost — unmeasured
 
-`ui/simulation_snapshot.cpp` pulls the whole surface (1.36 MiB at 544x626 RGBA8)
-through `srz80_engine_video_read` whenever the video panel is visible. The card's
-query is a `memcpy`, so the cost is in the engine's chunked copy plus
-`SDL_UpdateTexture`, not in rendering. The surface is also fixed at PAL height,
-so an NTSC picture spends its bottom 102 rows on never-drawn black.
+`ui/simulation_snapshot.cpp` reads the 1,362,176-byte surface at 60 Hz while the
+video panel is visible. The VDP copies each completed field into a published
+buffer. The card copies that buffer to the caller, then the UI uploads it with
+`SDL_UpdateTexture`. Measure each copy separately. The fixed PAL-sized surface
+also includes 102 unused rows in NTSC mode.
 
 Open questions: measure the per-frame copy cost; decide whether the surface
 should be re-registered on a PAL/NTSC switch (the host copies geometry at

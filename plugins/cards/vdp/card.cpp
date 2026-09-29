@@ -1,3 +1,4 @@
+#include <state.hpp>
 // SRZ80 card plugin: Yamaha V9938 / V9958 VDP.
 //
 // This is the host-facing half of the port in v9938_core.cpp.  It owns the
@@ -6,7 +7,7 @@
 //   four IO ports     -> v99x8_device::read()/write()
 //   the raster        -> one self-rescheduling scheduled event per scanline
 //   the IRQ signal    -> v99x8_device::irq_line()
-//   a video surface   -> the core's RGBA8 framebuffer, served in chunks
+//   a video surface   -> the last completed field, copied with its captured timing
 //   save/load state   -> the core's field-wise snapshot plus card metadata
 //
 // See README.md for the build wiring and TODO-VDP.md for what is deferred.
@@ -19,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "v9938_core.cpp"
 
@@ -220,6 +222,7 @@ class Card final : public srz80::vdp::v99x8_device {
         if (status != SRH_OK) return status;
         device_start();
         clear_frame();
+        frame_complete();
         arm_line();
         return SRH_OK;
     }
@@ -231,6 +234,7 @@ class Card final : public srz80::vdp::v99x8_device {
         frame_number_ = 0;
         // Register reset blanks the display even if no further raster event runs.
         clear_frame();
+        frame_complete();
         // Re-arm from the restarted timeline rather than from the old due time.
         if (line_event_) {
             host_->cancel(host_->context, line_event_);
@@ -278,37 +282,48 @@ class Card final : public srz80::vdp::v99x8_device {
         const uint32_t count =
             uint32_t(std::min<uint64_t>(*size, uint64_t(bytes) - offset));
         if (count)
-            std::memcpy(out, framebuffer() + offset, count);
+            std::memcpy(out, published_frame_.data() + offset, count);
         *size = count;
         return SRH_OK;
     }
 
     // ---- state -------------------------------------------------------------
 
-    uint64_t state_size() const { return state_header_size + v99x8_device::state_size() + sizeof(frame_number_); }
+    uint64_t state_size() const {
+        return state_header_size + v99x8_device::state_size() + 24 + 2ull * framebuffer_size();
+    }
 
     void save(uint8_t *buffer) const {
         if (!buffer)
             return;
-        const uint32_t header[2] = {state_version, uint32_t(model_)};
-        std::memcpy(buffer, header, sizeof(header));
+        srz80::sdk::state::put(buffer, uint32_t(model_));
         v99x8_device::save_state(buffer + state_header_size);
-        std::memcpy(buffer + state_size() - sizeof(frame_number_), &frame_number_, sizeof(frame_number_));
+        auto *display = buffer + state_header_size + v99x8_device::state_size();
+        srz80::sdk::state::put(display, frame_number_);
+        srz80::sdk::state::put(display + 8, published_timing_.frame_number);
+        srz80::sdk::state::put(display + 16, published_timing_.scanline);
+        srz80::sdk::state::put(display + 20, published_timing_.line_count);
+        std::memcpy(display + 24, framebuffer(), framebuffer_size());
+        std::memcpy(display + 24 + framebuffer_size(), published_frame_.data(), framebuffer_size());
     }
 
     bool load(const uint8_t *buffer, uint64_t size) {
-        if (!buffer || size < state_header_size) return false;
-        uint32_t header[2] = {0, 0};
-        std::memcpy(header, buffer, sizeof(header));
-        if (header[0] < 1 || header[0] > state_version || header[1] != uint32_t(model_))
+        if (!buffer || size != state_size()) return false;
+        if (srz80::sdk::state::get<uint32_t>(buffer) != uint32_t(model_))
             return false;
-        const bool legacy = header[0] == 1;
-        const uint64_t core_size = header[0] < 3 ? LEGACY_STATE_SIZE : v99x8_device::state_size();
-        if (size != state_header_size + core_size + (legacy ? 0 : sizeof(frame_number_))) return false;
+        const uint64_t core_size = v99x8_device::state_size();
+        const auto *display = buffer + state_header_size + core_size;
+        const SrhVideoTiming timing{SRH_INIT(SrhVideoTiming),
+            srz80::sdk::state::get<uint64_t>(display + 8),
+            srz80::sdk::state::get<uint32_t>(display + 16),
+            srz80::sdk::state::get<uint32_t>(display + 20)};
+        if ((timing.line_count != VTOTAL_NTSC && timing.line_count != VTOTAL_PAL) ||
+            timing.scanline >= timing.line_count) return false;
         if (!v99x8_device::load_state(buffer + state_header_size, core_size)) return false;
-        frame_number_ = 0;
-        if (!legacy)
-            std::memcpy(&frame_number_, buffer + size - sizeof(frame_number_), sizeof(frame_number_));
+        frame_number_ = srz80::sdk::state::get<uint64_t>(display);
+        restore_framebuffer(display + 24);
+        std::memcpy(published_frame_.data(), display + 24 + framebuffer_size(), framebuffer_size());
+        published_timing_ = timing;
         return true;
     }
 
@@ -403,8 +418,6 @@ class Card final : public srz80::vdp::v99x8_device {
     }
 
   protected:
-    // The core's only polymorphism point left to the card: the base
-    // palette_init() builds the V9958 YJK table when the card is model 1.
     void irq_line(uint8_t state) override {
         if (!irq_signal_ || state == irq_level_)
             return;
@@ -415,8 +428,7 @@ class Card final : public srz80::vdp::v99x8_device {
     }
 
   private:
-    static constexpr uint32_t state_version = 3;
-    static constexpr uint64_t state_header_size = sizeof(uint32_t) * 2;
+    static constexpr uint64_t state_header_size = 4;
 
     // The raster.  One event per scanline, rescheduled from inside its own
     // callback.  The delay is a 64-bit integer division of the current crystal
@@ -437,10 +449,16 @@ class Card final : public srz80::vdp::v99x8_device {
         return SRH_OK;
     }
 
+    void frame_complete() override {
+        // Interlace reads the previous field from the scanout buffer.
+        std::memcpy(published_frame_.data(), framebuffer(), framebuffer_size());
+        published_timing_ = {SRH_INIT(SrhVideoTiming), frame_number_, scanout_line(), scanout_lines()};
+    }
+
     static SrhStatus SRH_CALL timing(void *context, SrhVideoTiming *out) {
         if (!srz80::sdk::valid(out)) return SRH_INVALID;
         const auto &card = *static_cast<Card *>(context);
-        *out = {SRH_INIT(SrhVideoTiming), card.frame_number_, card.scanout_line(), card.scanout_lines()};
+        *out = card.published_timing_;
         return SRH_OK;
     }
 
@@ -456,6 +474,8 @@ class Card final : public srz80::vdp::v99x8_device {
     SrhHandle surface_ = 0;
     SrhHandle line_event_ = 0;
     SrhHandle irq_signal_ = 0;
+    std::vector<uint8_t> published_frame_ = std::vector<uint8_t>(framebuffer_size());
+    SrhVideoTiming published_timing_{SRH_INIT(SrhVideoTiming), 0, 0, VTOTAL_NTSC};
     uint64_t frame_number_ = 0;
     uint64_t base_ = 0;
     uint64_t raster_clock_hz_ = default_raster_clock_hz;
@@ -542,7 +562,7 @@ SrhStatus SRH_CALL property_set(void *context, uint32_t index, const SrhValue *i
         [&] { return static_cast<Card *>(context)->property_set(index, in) ? SRH_OK : SRH_INVALID; });
 }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (!size)
             return SRH_INVALID;
@@ -562,7 +582,7 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     });
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
     return srz80::sdk::guard([&] {
         return static_cast<Card *>(context)->load(buffer, size) ? SRH_OK : SRH_INVALID;
     });
@@ -605,6 +625,7 @@ const SrhCardDescriptor descriptor{
     0,
 };
 
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 2>;
 const SrhPlugin api{SRH_INIT(SrhPlugin),
                     "vdp",
                     create,
@@ -614,8 +635,8 @@ const SrhPlugin api{SRH_INIT(SrhPlugin),
                     property_info,
                     property_get,
                     property_set,
-                    save_state,
-                    load_state,
+                    State::save,
+                    State::load,
                     &descriptor,
                     save_project_data,
                     load_project_data};

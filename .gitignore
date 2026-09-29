@@ -28,6 +28,9 @@ AGENTS.md
 *.bin
 *.ic*
 
+# --- Archives ---
+*.zip
+
 # --- Rust ---
 target/
 **/*.rs.bk

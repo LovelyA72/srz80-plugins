@@ -477,13 +477,13 @@ Json Engine::save() const {
                       {"observers", obs},
                       {"pins", c.pins}};
     }
-    return {{"schema", 1},          {"topology", topology},
+    return {{"topology", topology},
             {"components", states}, {"registers", {output, direction, defaults, change, input, conflict}},
             {"pins", pins},         {"runtime_revision", runtime_revision}};
 }
 
 void Engine::restore(const Json &j) {
-    require(j.at("schema") == 1 && j.at("topology") == topology);
+    require(j.at("topology") == topology);
     Engine copy = *this;
     for (auto &[id, c] : copy.components) {
         const auto &s = j.at("components").at(id);

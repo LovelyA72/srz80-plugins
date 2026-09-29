@@ -1,4 +1,6 @@
+#include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -6,7 +8,6 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <nlohmann/json.hpp>
 
 namespace {
 constexpr uint32_t kRegisterCount = 16;
@@ -18,24 +19,20 @@ struct Settings { uint32_t sample_rate = 16'000, channel = 0; };
 bool parse_settings(const SrhConfig *config, Settings &settings) {
     if (!config || !srz80::sdk::has_field(config, &SrhConfig::config_json) ||
         !config->config_json) return true;
-    const auto json = nlohmann::json::parse(config->config_json,
-        config->config_json + config->config_json_size, nullptr, false);
-    if (!json.is_object()) return false;
-    for (auto it = json.begin(); it != json.end(); ++it)
-        if (it.key() != "sample_rate" && it.key() != "channel") return false;
-    if (json.contains("sample_rate")) {
-        if (!json["sample_rate"].is_number_unsigned()) return false;
-        const auto value = json["sample_rate"].get<uint64_t>();
-        if (value < 8'000 || value > 384'000) return false;
-        settings.sample_rate = static_cast<uint32_t>(value);
-    }
-    if (json.contains("channel")) {
-        if (!json["channel"].is_number_unsigned()) return false;
-        const auto value = json["channel"].get<uint64_t>();
-        if (value > 7) return false;
-        settings.channel = static_cast<uint32_t>(value);
-    }
-    return true;
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+        auto &value = *static_cast<Settings *>(opaque);
+        uint64_t number = 0;
+        if (!srz80::sdk::json::unsigned_value(token, number)) return false;
+        if (token.name == "sample_rate" && number >= 8'000 && number <= 384'000)
+            value.sample_rate = static_cast<uint32_t>(number);
+        else if (token.name == "channel" && number <= 7)
+            value.channel = static_cast<uint32_t>(number);
+        else return false;
+        return true;
+    };
+    return config->config_json_size <= SIZE_MAX &&
+           bool(srz80::sdk::json::object(
+               {config->config_json, size_t(config->config_json_size)}, visit, &settings));
 }
 
 struct Card {
@@ -217,30 +214,30 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) {
     out->unsigned_value = values[index]; return SRH_OK;
 }
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
-constexpr uint64_t kStateSize = 13;
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+constexpr uint64_t kStateSize = 9;
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     if (!buffer) { *size = kStateSize; return SRH_OK; }
     if (*size < kStateSize) { *size = kStateSize; return SRH_UNAVAILABLE; }
     const auto &card = *static_cast<Card *>(context);
-    std::memcpy(buffer, "AIN1", 4);
-    for (unsigned i = 0; i < 4; ++i) buffer[4 + i] = uint8_t(card.rate >> (8 * i));
-    for (unsigned i = 0; i < 4; ++i) buffer[8 + i] = uint8_t(card.pending_rate >> (8 * i));
-    buffer[12] = uint8_t(card.channel); *size = kStateSize; return SRH_OK;
+    srz80::sdk::state::put(buffer, card.rate);
+    srz80::sdk::state::put(buffer + 4, card.pending_rate);
+    buffer[8] = uint8_t(card.channel); *size = kStateSize; return SRH_OK;
 }
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size != kStateSize || std::memcmp(buffer, "AIN1", 4)) return SRH_INVALID;
-    uint32_t rate = 0, pending = 0;
-    for (unsigned i = 0; i < 4; ++i) { rate |= uint32_t(buffer[4 + i]) << (8 * i); pending |= uint32_t(buffer[8 + i]) << (8 * i); }
-    if (rate < 8'000 || rate > 384'000 || pending < 8'000 || pending > 384'000 || buffer[12] > 7) return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size != kStateSize) return SRH_INVALID;
+    const auto rate = srz80::sdk::state::get<uint32_t>(buffer);
+    const auto pending = srz80::sdk::state::get<uint32_t>(buffer + 4);
+    if (rate < 8'000 || rate > 384'000 || pending < 8'000 || pending > 384'000 || buffer[8] > 7) return SRH_INVALID;
     auto &card = *static_cast<Card *>(context); card.stop(); card.rate = rate; card.pending_rate = pending;
-    card.channel = buffer[12]; card.underflow = card.overflow = card.channel_missing = false; return SRH_OK;
+    card.channel = buffer[8]; card.underflow = card.overflow = card.channel_missing = false; return SRH_OK;
 }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor), "Audio", "Audio input",
     "Live host audio input as a mono unsigned 8-bit PCM FIFO", 0x10000000, kRegisterCount,
     0, 0, 0, 0, R"({"sample_rate":16000,"channel":0})", nullptr, nullptr, nullptr, 0};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "audio_input", create, destroy, reset,
-    property_count, property_info, property_get, property_set, save_state, load_state,
+    property_count, property_info, property_get, property_set, State::save, State::load,
     &descriptor, nullptr, nullptr};
 }
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

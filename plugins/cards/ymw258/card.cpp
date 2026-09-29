@@ -1,4 +1,6 @@
+#include <state.hpp>
 #include <boundary.hpp>
+#include <json.hpp>
 
 #include "ymw258.hpp"
 
@@ -10,8 +12,6 @@
 #include <span>
 #include <string>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 namespace {
 constexpr uint32_t port_count = 3;
@@ -31,22 +31,25 @@ struct Settings {
 };
 
 bool parse_settings(const SrhConfig *config, Settings &settings) {
-    try {
-        const bool has_json = srz80::sdk::has_field(config, &SrhConfig::config_json) && config->config_json;
-        auto json = has_json
-                        ? nlohmann::json::parse(config->config_json,
-                                                config->config_json + config->config_json_size)
-                        : nlohmann::json::object();
-        if (!json.is_object()) return false;
-        for (auto it = json.begin(); it != json.end(); ++it)
-            if (it.key() != "chip_clock_hz" && it.key() != "sample_rate" && it.key() != "stream_name") return false;
-        settings.chip_clock_hz = json.value("chip_clock_hz", settings.chip_clock_hz);
-        settings.stream_name = json.value("stream_name", settings.stream_name);
-        return settings.chip_clock_hz >= 1'000'000 && settings.chip_clock_hz <= 50'000'000 &&
-               !settings.stream_name.empty() && settings.stream_name.size() <= 256;
-    } catch (...) {
+    if (!srz80::sdk::has_field(config, &SrhConfig::config_json) || !config->config_json) return true;
+    const auto visit = [](void *opaque, const srz80::sdk::json::Token &token) noexcept {
+        auto &value = *static_cast<Settings *>(opaque);
+        if (token.name == "chip_clock_hz") {
+            uint64_t number = 0;
+            if (!srz80::sdk::json::unsigned_value(token, number) || number > UINT32_MAX) return false;
+            value.chip_clock_hz = static_cast<uint32_t>(number);
+            return true;
+        }
+        if (token.name == "stream_name")
+            return token.type == srz80::sdk::json::Type::string &&
+                   bool(srz80::sdk::json::decode_string(token.value, value.stream_name));
+        return token.name == "sample_rate";
+    };
+    if (config->config_json_size > SIZE_MAX ||
+        !srz80::sdk::json::object({config->config_json, size_t(config->config_json_size)}, visit, &settings))
         return false;
-    }
+    return settings.chip_clock_hz >= 1'000'000 && settings.chip_clock_hz <= 50'000'000 &&
+           !settings.stream_name.empty() && settings.stream_name.size() <= 256;
 }
 
 struct Card {
@@ -278,7 +281,7 @@ SrhStatus SRH_CALL get(void *context, uint32_t index, SrhValue *out) {
 
 SrhStatus SRH_CALL set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 
-SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
+SrhStatus SRH_CALL save_payload(void *context, uint8_t *buffer, uint64_t *size) {
     if (!size) return SRH_INVALID;
     const auto &card = *static_cast<Card *>(context);
     const auto engine = card.engine.save_state();
@@ -295,8 +298,8 @@ SrhStatus SRH_CALL save_state(void *context, uint8_t *buffer, uint64_t *size) {
     return SRH_OK;
 }
 
-SrhStatus SRH_CALL load_state(void *context, const uint8_t *buffer, uint64_t size) {
-    if (!buffer || size < 7) return SRH_INVALID;
+SrhStatus SRH_CALL load_payload(void *context, const uint8_t *buffer, uint64_t size) {
+    if (!buffer || size < 7 || buffer[0] > 31 || buffer[1] > 7) return SRH_INVALID;
     uint32_t engine_size = 0;
     for (uint32_t byte = 0; byte < 4; ++byte) engine_size |= static_cast<uint32_t>(buffer[3 + byte]) << (byte * 8);
     if (engine_size > size - 7) return SRH_INVALID;
@@ -321,8 +324,9 @@ const SrhCardDescriptor descriptor{
     SRH_CARD_REQUIRES_IMAGE,
     R"({"chip_clock_hz":9878400,"stream_name":"YMW258"})", nullptr, nullptr,
     image_slots, 4};
+using State = srz80::sdk::state::Callbacks<save_payload, load_payload, 1>;
 const SrhPlugin api{SRH_INIT(SrhPlugin), "ymw258", create, destroy, reset, count, info, get, set,
-                    save_state, load_state, &descriptor, nullptr, nullptr};
+                    State::save, State::load, &descriptor, nullptr, nullptr};
 } // namespace
 
 extern "C" SRH_EXPORT const SrhPlugin *SRH_CALL srz80_plugin_init(const ShouryoHost *host) {

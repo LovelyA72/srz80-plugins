@@ -102,7 +102,7 @@ typedef struct SrhProperty {
     SRH_HEADER;
     const char *name;
     const char *group;
-    const char *description;
+    const char *description; /* optional tooltip; may be NULL or empty */
     uint32_t kind, bits, base, editable;
     const char *enum_labels; /* labels separated by |, indexed from zero */
     /* UI hints (appended in SRH_ABI 1, guarded by struct_size). */
@@ -151,10 +151,10 @@ typedef struct SrhHostDebugV1 {
     SrhBoundaryEx boundary_ex;
     SrhRequestStop request_stop;
     SrhSetTraceKind set_trace_kind;
-    /* Appended in SRH_ABI 1; use only after checking struct_size. */
+    /* Appended in SRH_ABI 1. Use only after checking struct_size. */
     SrhDebugFlag trace_enabled;
     SrhDebugFlag boundary_required;
-    /* Live per-card switch. Message is copied by the host; NULL clears it.
+    /* Live per-card switch. Message is copied by the host. NULL clears it.
        Defaults to enabled. Use only after checking struct_size. */
     SrhStatus(SRH_CALL *set_disassembly_enabled)(void *, SrhHandle, uint32_t, const char *);
 } SrhHostDebugV1;
@@ -180,7 +180,7 @@ typedef struct SrhHostInputV1 {
     SrhInputRegister register_input;
     SrhInputDue input_due;
     SrhInputPop input_pop;
-    /* Optional ABI-1 tail. One subscriber per endpoint; cancel with host.cancel.
+    /* Optional ABI-1 tail. One subscriber per endpoint. Cancel with host.cancel.
        Callback runs at a scheduler boundary, once per empty-to-due transition. */
     SrhStatus(SRH_CALL *subscribe_due)(void *, SrhHandle, SrhHandle, SrhCallback,
                                       void *, SrhHandle *);
@@ -206,6 +206,7 @@ typedef uint32_t SrhVideoFlags;
    This is deliberately opt-in: an ordinary video registration is never
    shader-enabled just because the host has a shader selected. */
 enum { SRH_VIDEO_ALLOW_SHADER = 1u };
+/* Read the last completed image. Its timing stays paired with it. */
 typedef SrhStatus(SRH_CALL *SrhVideoQuery)(void *, uint64_t, uint8_t *, uint32_t *, uint32_t *);
 typedef SrhStatus(SRH_CALL *SrhVideoRegister)(void *, SrhHandle, uint32_t, uint32_t,
                                                SrhVideoFormat, SrhVideoQuery, void *,
@@ -213,9 +214,10 @@ typedef SrhStatus(SRH_CALL *SrhVideoRegister)(void *, SrhHandle, uint32_t, uint3
 typedef SrhStatus(SRH_CALL *SrhVideoRegisterEx)(void *, SrhHandle, uint32_t, uint32_t,
                                                   SrhVideoFormat, SrhVideoQuery, void *,
                                                   SrhVideoFlags, SrhHandle *);
-/* Card-owned scanout position, copied on the simulation thread. Frame number
-   advances at each field/frame boundary, including when pixels do not change.
-   Reset may restart it. scanline is the next line to scan; line_count > 0. */
+/* Timing of the published image. Raster cards capture it before changing field
+   phase. frame_number advances for every completed field, even if pixels did
+   not change. scanline is the next line at capture. Reset may restart the
+   counter. Non-raster cards with timing use scanline=0 and line_count=1. */
 typedef struct SrhVideoTiming {
     SRH_HEADER;
     uint64_t frame_number;
@@ -234,7 +236,7 @@ typedef struct SrhHostVideoV1 {
     SrhStatus(SRH_CALL *set_video_timing)(void *, SrhHandle, SrhVideoTimingQuery, void *);
 } SrhHostVideoV1;
 
-/* Host audio source registration. Each source declares its native sample rate;
+/* Host audio source registration. Each source declares its native sample rate.
    the host resamples it to sample_rate before mixing. Audio callbacks are
    invoked by the host's simulation thread, never by a device callback.
    start_frame and frames use the source's native-rate timeline. The interleaved
@@ -255,11 +257,19 @@ typedef struct SrhHostAudioV1 {
 } SrhHostAudioV1;
 
 /* Optional query: "host.audio_input.v1". Existing ABI tables are unchanged.
-   Simulation-thread only. request(owner, rate) starts a subscription at
-   8000..384000 Hz; request(owner, 0) stops it. read() is nonblocking, returns
-   frames of interleaved float PCM, and takes capacity in float sample slots.
-   The host performs nearest-exact rate conversion; clients must use the
-   returned rate and channel count on every call. */
+   Simulation-thread only. request(owner, rate) starts a subscription at 8000..384000 Hz; request(owner,
+   0) stops and discards it. The owner must be alive; removal stops capture.
+   Repeating a request with the same rate preserves data; a new rate clears it.
+   Resampling is strictly nearest-exact: source frame floor((n + 0.5) *
+   source_rate / requested_rate), continuous across blocks, without filtering.
+   SDL preserves native device rate; its conversion is only format/channels.
+   read is nonblocking, returns interleaved float PCM in [-1, 1], and writes the
+   current rate/channels even when no frames are available. capacity is in FLOAT
+   SAMPLES, not frames; return count is FRAMES. Always use the returned format:
+   user device/channel/rate changes discard queued data. Each owner has its own
+   bounded queue (oldest frames drop on overflow). Disabled/unavailable input
+   returns zero frames. Capture follows wall time, not emulated time; it is not
+   saved in snapshots. Check query for NULL on older hosts. */
 typedef struct SrhHostAudioInputV1 {
     SRH_HEADER;
     void *context;
