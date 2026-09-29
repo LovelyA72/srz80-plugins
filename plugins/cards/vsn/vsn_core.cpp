@@ -19,6 +19,7 @@ void Core::reset() {
     registers_[0x2a]=32; registers_[0x2b]=30;
     registers_[0x2d]=4; registers_[0x2f]=8;
     line_=lines()-1; frame_=faults_=fault_address_=0;
+    published_frame_=published_line_=0;
     vblank_=fault_write_=rendering_=false;
     const auto clear=[](std::vector<uint8_t> &buffer) {
         std::fill(buffer.begin(),buffer.end(),0);
@@ -218,27 +219,34 @@ void Core::tick() {
     dma_chunk();                                                 // one chunk per line
     if (line_<height) render_line();
     ++line_;
-    if (line_==height) std::swap(front_, back_); // publish the completed frame
+    if (line_==height) {
+        std::swap(front_, back_);
+        published_frame_=frame_;
+        published_line_=line_;
+    }
     if (line_==lines()) { line_=0; ++frame_; renderer_->begin_frame(frame_); }
 }
 std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;
-    out.reserve(164+2*frame_bytes);
+    out.reserve(176+2*frame_bytes);
     state::append(out,0x314e5356,4); // VSN1
-    state::append(out,4,2);
+    state::append(out,5,2);
     state::append(out,unsigned(region_),1); state::append(out,strict_,1);
     out.insert(out.end(),registers_.begin(),registers_.end());
     state::append(out,line_,2); state::append(out,vblank_,1); state::append(out,fault_write_,1);
     state::append(out,frame_,8); state::append(out,faults_,8); state::append(out,fault_address_,8);
+    state::append(out,published_frame_,8); state::append(out,published_line_,4);
     out.insert(out.end(),front_.begin(),front_.end());
     out.insert(out.end(),back_.begin(),back_.end());
     return out;
 }
 bool Core::load(std::span<const uint8_t> data) {
-    constexpr size_t header=164;
+    constexpr size_t header=176;
     if (data.size()!=header+2*frame_bytes || state::get(data,0,4)!=0x314e5356 ||
-        state::get(data,4,2)!=4 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
-        state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1) return false;
+        state::get(data,4,2)!=5 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
+        state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1 ||
+        state::get(data,164,8)>state::get(data,140,8) ||
+        (state::get(data,172,4)!=0 && state::get(data,172,4)!=height)) return false;
     // Validate all stored register bytes, including reserved and masked bits,
     // before touching live state. Status is stored separately from live blank.
     Core validator(memory_,region_,strict_);
@@ -258,6 +266,7 @@ bool Core::load(std::span<const uint8_t> data) {
     registers_=validator.registers_;
     line_=uint32_t(state::get(data,136,2)); vblank_=data[138]; fault_write_=data[139];
     frame_=state::get(data,140,8); faults_=state::get(data,148,8); fault_address_=state::get(data,156,8);
+    published_frame_=state::get(data,164,8); published_line_=uint32_t(state::get(data,172,4));
     std::copy(data.begin()+header,data.begin()+header+frame_bytes,front_.begin());
     std::copy(data.begin()+header+frame_bytes,data.end(),back_.begin());
     renderer_->reset(); // Clears the frame-latched palette/OAM caches.

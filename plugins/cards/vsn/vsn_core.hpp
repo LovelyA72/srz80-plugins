@@ -58,6 +58,8 @@ public:
     uint32_t line() const { return line_; }
     uint32_t lines() const { return profile(region_).lines; }
     uint64_t frame() const { return frame_; }
+    uint64_t published_frame() const { return published_frame_; }
+    uint32_t published_line() const { return published_line_; }
     uint64_t fault_count() const { return faults_; }
     uint64_t fault_address() const { return fault_address_; }
     bool fault_was_write() const { return fault_write_; }
@@ -105,6 +107,8 @@ private:
     std::vector<uint8_t> front_, back_;
     uint32_t line_=0;
     uint64_t frame_=0, faults_=0, fault_address_=0;
+    uint64_t published_frame_=0;
+    uint32_t published_line_=0;
     bool vblank_=false, fault_write_=false, rendering_=false;
 };
 } // namespace vsn

@@ -299,17 +299,16 @@ every mode: mode 5 samples two distinct 16x16-tile rows, low-res modes duplicate
 one upscaled row. The surface is double-buffered: the raster renders into a
 back buffer and publishes a whole completed frame into the front buffer at the
 end of the visible area (the post-render line), so a video query always copies
-one complete frame rather than a mid-render image. Video and timing queries only
+one complete frame rather than a mid-render image. Timing is captured with that
+frame and stays fixed while the next frame renders. Video and timing queries only
 copy stored data. They do not fetch, render, advance counters or clear flags.
 Reset (warm or cold) resets registers, counters, faults, both framebuffers and
 scheduling remainder, preserving shared RAM. Destroy cancels the event and
 unmaps MMIO; video providers use host owner teardown.
 
-The standalone core has validated fixed-endian snapshots (`VSN1`, version 4;
-version 2 added the second framebuffer, version 3 enlarged both framebuffers to
-the 512x480 surface, version 4 makes the interrupt-pending, raster-compare and
-DMA registers meaningful — their state is register-resident, so the byte layout
-is unchanged). Snapshots round-trip mid-DMA transfers and pending/enabled causes
+The standalone core has validated fixed-endian snapshots (`VSN1`, version 5).
+Version 5 stores the published frame timing with the two framebuffers. Snapshots
+round-trip mid-DMA transfers and pending/enabled causes
 at every raster phase; a load re-latches palette/OAM from shared memory at the
 next frame. Card ABI save/load is deliberately unavailable until phase 8: the
 current host API supplies no simulated scheduler clock or post-restore hook,

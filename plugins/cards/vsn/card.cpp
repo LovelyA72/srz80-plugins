@@ -229,7 +229,7 @@ private:
     static SrhStatus SRH_CALL timing(void *context, SrhVideoTiming *out) {
         if (!srz80::sdk::valid(out)) return SRH_INVALID;
         const auto &core=static_cast<Card*>(context)->core_;
-        *out={SRH_INIT(SrhVideoTiming),core.frame(),core.line(),core.lines()};
+        *out={SRH_INIT(SrhVideoTiming),core.published_frame(),core.published_line(),core.lines()};
         return SRH_OK;
     }
     const ShouryoHost &host_;
