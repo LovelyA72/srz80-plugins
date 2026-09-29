@@ -1,9 +1,11 @@
 #pragma once
+#include "target.hpp"
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 namespace srz80::assembler {
+bool is_assembly_directive(std::string_view word);
 enum class Severity { error, warning };
 struct Diagnostic {
     Severity severity = Severity::error;
@@ -34,9 +36,9 @@ struct AssemblyResult {
     std::vector<Diagnostic> diagnostics;
     bool succeeded = false;
 };
-class Z80Assembler {
+class Assembler {
 public:
-    AssemblyResult assemble(const std::string &source, uint32_t origin = 0,
+    AssemblyResult assemble(const std::string &source, Target target = Target::z80, uint32_t origin = 0,
                             uint64_t revision = 0) const;
 };
 }

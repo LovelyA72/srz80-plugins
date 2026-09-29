@@ -1,6 +1,7 @@
 #include "editor.hpp"
 #include "inline_editor.hpp"
 #include "loader.hpp"
+#include "project_settings.hpp"
 #include <boundary.hpp>
 #include <array>
 #include <algorithm>
@@ -18,6 +19,12 @@ using namespace srz80::assembler;
 struct Tool {
     const SrhToolHostV1 *host = nullptr;
     SourceModel source;
+    ProjectSettings project_settings;
+    std::string source_key;
+    void remember_source_settings() {
+        if (source_open && !source_key.empty())
+            project_settings.sources[source_key] = {source.target, source.origin};
+    }
     Editor editor;
     InlineEditor inline_editor;
     bool text_mode = false;
@@ -36,6 +43,15 @@ struct Tool {
     std::array<char,256> find{}, replacement{};
     bool show_find = false;
 };
+
+std::string project_root(const SrhToolHostV1 &host) {
+    if (!host.project_root) return {};
+    uint64_t size = 0;
+    if (host.project_root(host.context, nullptr, &size) != SRH_OK || !size) return {};
+    std::vector<char> root(static_cast<size_t>(size));
+    if (host.project_root(host.context, root.data(), &size) != SRH_OK) return {};
+    return root.data();
+}
 
 void set_syntax_theme(Tool &tool, const char *value) {
     std::string candidate = value ? value : "";
@@ -76,8 +92,14 @@ SrhStatus SRH_CALL open_project_source(void *context, const char *path, const ch
             return SRH_INVALID;
         auto &tool = *static_cast<Tool *>(context);
         try {
+            tool.remember_source_settings();
+            const auto key = ProjectSettings::source_key(path, project_root(*tool.host));
+            const auto settings = tool.project_settings.get(key);
             tool.source.open_text(path, size ? std::string(text, static_cast<size_t>(size))
                                              : std::string{});
+            tool.source_key = key;
+            tool.source.target = settings.target;
+            tool.source.origin = settings.origin;
             tool.source.assemble();
             tool.source_open = true;
             tool.inline_editor.reset();
@@ -105,7 +127,7 @@ SrhStatus SRH_CALL create(const SrhToolHostV1 *host, void **result) {
     return srz80::sdk::guard([&]() -> SrhStatus {
         if (host && host->abi_version == SRH_ABI && !srz80::sdk::valid(host) &&
             srz80::sdk::has_field(host, &SrhToolHostV1::log) && host->log)
-            host->log(host->context, "Z80 assembler: incompatible host; project-document services are required.");
+            host->log(host->context, "Assembler: incompatible host; project-document services are required.");
         if(!srz80::sdk::valid(host) || !result || !host->imgui_version ||
            std::strcmp(host->imgui_version,IMGUI_VERSION) || !host->imgui_context ||
            !host->imgui_alloc || !host->imgui_free || !host->space_count || !host->space_info ||
@@ -124,7 +146,7 @@ SrhStatus SRH_CALL create(const SrhToolHostV1 *host, void **result) {
         }
         if (srz80::sdk::has_field(host, &SrhToolHostV1::config_register) && host->config_register) {
             SrhConfigEntry entry{SRH_INIT(SrhConfigEntry),
-                                 "Tools/Z80 assembler",
+                                 "Tools/Assembler",
                                  "z80_assembler.syntax_theme",
                                  "Syntax highlighting",
                                  "Colors used for comments, directives, instructions, registers, and values",
@@ -141,9 +163,12 @@ SrhStatus SRH_CALL create(const SrhToolHostV1 *host, void **result) {
             for (const auto &[extension, label] :
                  {std::pair{"asm", "Assembly source (.asm)"},
                   std::pair{"s", "Assembly source (.s)"},
-                  std::pair{"z80", "Assembly source (.z80)"}}) {
+                  std::pair{"z80", "Assembly source (.z80)"},
+                  std::pair{"68k", "Assembly source (.68k)"},
+                  std::pair{"65816", "Assembly source (.65816)"},
+                  std::pair{"65c02", "Assembly source (.65c02)"}}) {
                 SrhToolTextFormat format{SRH_INIT(SrhToolTextFormat), "z80_assembler", extension,
-                                         label, tool.get(), open_project_source};
+                                         label, tool.get(), open_project_source, 0};
                 if (host->text_format_register(host->context, &format) != SRH_OK) {
                     host->text_format_unregister(host->context, tool.get());
                     if (srz80::sdk::has_field(host, &SrhToolHostV1::config_unregister) &&
@@ -197,7 +222,7 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
         ImGui::SetCurrentContext(static_cast<ImGuiContext *>(h.imgui_context));
         bool visible=*open!=0;
         ImGui::SetNextWindowSize(ImVec2(1050,740),ImGuiCond_FirstUseEver);
-        const char *title="Z80 assembler###z80_assembler";
+        const char *title="Assembler###z80_assembler";
         if(ImGui::Begin(title,&visible)) {
             try {
                 if (!t.source_open) {
@@ -215,7 +240,8 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
                 if(selected==spaces.end() && !spaces.empty()) { selected=spaces.begin(); t.space_name=selected->name; }
                 const SrhHandle space=selected==spaces.end()?0:selected->id;
                 const bool stopped=h.run_state(h.context)==SRT_STOPPED;
-                const bool loadable=stopped && space && s.fresh() && s.result.succeeded && !s.result.segments.empty();
+                const auto loadable = [&] { return stopped && space && s.fresh() &&
+                    s.result.succeeded && !s.result.segments.empty(); };
                 size_t bytes=0;for(auto &seg:s.result.segments) bytes+=seg.bytes.size();
                 const ImVec4 build_colour=!s.fresh()?ImVec4(.91f,.62f,.17f,1.f):s.result.succeeded?ImVec4(.25f,.74f,.45f,1.f):ImVec4(.90f,.30f,.30f,1.f);
                 const char *build_label=!s.fresh()?"Changes pending":s.result.succeeded?"Build ready":"Build has errors";
@@ -231,9 +257,9 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
                     return ImGui::CalcTextSize(label).x+frame_padding;
                 };
                 const float space_width=std::max(142.f,ImGui::CalcTextSize("No address spaces").x+frame_padding*2.f);
-                const float origin_width=std::max(74.f,ImGui::CalcTextSize("0000").x+frame_padding+10.f);
+                const float origin_width=std::max(90.f,ImGui::CalcTextSize("000000").x+frame_padding+10.f);
                 std::vector<float> toolbar_items={
-                    ImGui::CalcTextSize("Z80 Assembly").x,
+                    ImGui::CalcTextSize("W65C816").x+frame_padding+ImGui::GetFrameHeight(),
                     ImGui::CalcTextSize(document_name.c_str()).x,
                     button_width("Assemble  F5"),space_width,ImGui::CalcTextSize("ORG").x,origin_width,
                     button_width("Load + reset  F6"),button_width("Keep PC"),button_width("Run  F4"),12.f,
@@ -271,7 +297,18 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
                         row_used+=row_used>0.f?item_spacing+item_width:item_width;
                     }
                 };
-                place(toolbar_items[0]); ImGui::TextUnformatted("Z80 Assembly");
+                place(toolbar_items[0]); ImGui::SetNextItemWidth(toolbar_items[0]);
+                if (ImGui::BeginCombo("##cpu", target_info(s.target).name)) {
+                    for (const auto &target : targets) {
+                        if (ImGui::Selectable(target.name, s.target == target.target)) {
+                            t.inline_editor.finish(s);
+                            s.set_target(target.target);
+                            t.last_edit = ImGui::GetTime();
+                            t.remember_source_settings();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
                 place(toolbar_items[1]); ImGui::TextDisabled("%s",document_name.c_str());
                 if(!s.path.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s",s.path.c_str());
                 place(toolbar_items[2]); if(primary_button("Assemble  F5") || (focused && ImGui::IsKeyPressed(ImGuiKey_F5,false)) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_Enter,false))) s.assemble();
@@ -285,17 +322,15 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
                     for(auto &candidate:spaces) if(ImGui::Selectable(candidate.name,t.space_name==candidate.name)) t.space_name=candidate.name;
                     ImGui::EndCombo();
                 }
-                if(ImGui::IsItemHovered()) ImGui::SetTooltip("Where assembled bytes will go");
-                // The combo is self-describing; its tooltip carries the full
-                // label while the compact ORG marker keeps the row readable.
                 place(toolbar_items[4]); ImGui::TextDisabled("ORG");
                 place(toolbar_items[5]); ImGui::SetNextItemWidth(origin_width);
-                if (srz80::gui::input_hexadecimal("##origin", s.origin, 16)) {
+                if (srz80::gui::input_hexadecimal("##origin", s.origin, target_info(s.target).address_bits)) {
                     s.changed();
                     t.last_edit = ImGui::GetTime();
+                    t.remember_source_settings();
                 }
-                place(toolbar_items[6]); ImGui::BeginDisabled(!loadable);
-                if((primary_button("Load + reset  F6") || (focused && ImGui::IsKeyPressed(ImGuiKey_F6,false))) && loadable) t.status=load(h,space,s,true);
+                place(toolbar_items[6]); ImGui::BeginDisabled(!loadable());
+                if((primary_button("Load + reset  F6") || (focused && ImGui::IsKeyPressed(ImGuiKey_F6,false))) && loadable()) t.status=load(h,space,s,true);
                 place(toolbar_items[7]); if(ImGui::Button("Keep PC")) t.status=load(h,space,s,false);
                 ImGui::EndDisabled();
                 place(toolbar_items[8]); if(ImGui::Button("Run  F4") || (focused && ImGui::IsKeyPressed(ImGuiKey_F4,false))) { auto r=h.run(h.context); t.status=r==SRH_OK?"Rack resumed":"Resume failed"; }
@@ -353,7 +388,7 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
                     ImGui::BeginChild("symbols-scroll",ImVec2(0,0));
                     ImGui::BeginDisabled(!s.fresh());
                     for(auto &symbol:s.result.symbols) {
-                        char value[32];std::snprintf(value,sizeof(value),"%04llX",static_cast<unsigned long long>(symbol.value));
+                        char value[32];std::snprintf(value,sizeof(value),"%0*llX",target_info(s.target).address_digits(),static_cast<unsigned long long>(symbol.value));
                         auto label=symbol.name+"  "+value;
                         if(ImGui::Selectable(label.c_str())) t.navigate(symbol.definition_line);
                     }
@@ -403,8 +438,40 @@ SrhStatus SRH_CALL draw(void *instance,uint32_t *open) {
         *open=visible?1u:0u;return SRH_OK;
     });
 }
-const SrhToolPlugin api{SRH_INIT(SrhToolPlugin),"z80_assembler","Z80 assembler",IMGUI_VERSION,
-                        create,destroy,draw,"CPU",0,nullptr,nullptr,nullptr,nullptr};
+SrhStatus SRH_CALL state_get(void *instance, char *out, uint64_t *size) {
+    return srz80::sdk::guard([&]() -> SrhStatus {
+        if (!instance || !size) return SRH_INVALID;
+        auto &tool = *static_cast<Tool *>(instance);
+        tool.remember_source_settings();
+        const auto text = tool.project_settings.save();
+        const auto capacity = *size;
+        *size = text.size() + 1;
+        if (!out) return SRH_OK;
+        if (capacity < *size) return SRH_INVALID;
+        std::memcpy(out, text.c_str(), static_cast<size_t>(*size));
+        return SRH_OK;
+    });
+}
+SrhStatus SRH_CALL state_load(void *instance, const char *text) {
+    return srz80::sdk::guard([&]() -> SrhStatus {
+        if (!instance || !text) return SRH_INVALID;
+        auto &tool = *static_cast<Tool *>(instance);
+        if (!tool.project_settings.load(text)) return SRH_INVALID;
+        // A newly installed project owns a fresh set of host documents.
+        tool.source = SourceModel{};
+        tool.source_key.clear();
+        tool.source_open = false;
+        tool.inline_editor.reset();
+        tool.editor.open("", 0);
+        tool.status.clear();
+        tool.sync_error.clear();
+        tool.space_name.clear();
+        return SRH_OK;
+    });
+}
+// Preserve the plugin ID and binary name used by existing project documents.
+const SrhToolPlugin api{SRH_INIT(SrhToolPlugin),"z80_assembler","Assembler",IMGUI_VERSION,
+                        create,destroy,draw,"CPU",Srh_TOOL_PROJECT_STATE_TEXT,state_get,state_load,nullptr,nullptr};
 }
 extern "C" SRH_EXPORT const SrhToolPlugin *SRH_CALL srz80_tool_init(const SrhToolHostV1 *host) {
     if(!host || host->abi_version!=SRH_ABI) return nullptr;

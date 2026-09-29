@@ -31,21 +31,18 @@ bool is_word(char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '\'';
 }
 
-bool is_register(std::string_view token) {
+bool is_register(Target target, std::string_view token) {
+    if (target == Target::mc68000) {
+        return (token.size() == 2 && (token[0] == 'D' || token[0] == 'A') &&
+                token[1] >= '0' && token[1] <= '7') ||
+            token == "SP" || token == "PC" || token == "SR" || token == "CCR" || token == "USP";
+    }
+    if (target == Target::w65c816 || target == Target::w65c02)
+        return token == "A" || token == "X" || token == "Y" || token == "S";
     static constexpr std::string_view registers[] = {
         "A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "AF", "BC", "DE", "HL",
         "IX", "IY", "SP", "PC", "IXH", "IXL", "IYH", "IYL", "AF'"};
     for (const auto name : registers)
-        if (token == name)
-            return true;
-    return false;
-}
-
-bool is_directive(std::string_view token) {
-    static constexpr std::string_view directives[] = {
-        "ORG", "EQU", "SET", "DB", "DEFB", "DW", "DEFW", "DD", "DEFD", "DS", "DEFS",
-        "DM", "DEFM", "DUP", "INCBIN", "INCLUDE", "ALIGN", "END"};
-    for (const auto name : directives)
         if (token == name)
             return true;
     return false;
@@ -56,7 +53,7 @@ bool is_number_start(char c) {
 }
 
 void add_source_text(ImDrawList *draw_list, ImVec2 position, std::string_view source,
-                     const SyntaxPalette &palette) {
+                     const SyntaxPalette &palette, Target target) {
     const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text);
     size_t i = 0;
     bool first_token = true;
@@ -67,7 +64,7 @@ void add_source_text(ImDrawList *draw_list, ImVec2 position, std::string_view so
         position.x += ImGui::CalcTextSize(text.data(), text.data() + text.size()).x;
     };
     while (i < source.size()) {
-        if (source[i] == ';') {
+        if (source[i] == ';' || (target == Target::mc68000 && first_token && source[i] == '*')) {
             put(source.substr(i), ImGui::ColorConvertFloat4ToU32(palette.comment));
             break;
         }
@@ -92,6 +89,15 @@ void add_source_text(ImDrawList *draw_list, ImVec2 position, std::string_view so
             first_token = false;
             continue;
         }
+        if (is_number_start(source[i])) {
+            const size_t begin = i++;
+            while (i < source.size() && (std::isalnum(static_cast<unsigned char>(source[i])) ||
+                                         source[i] == '$' || source[i] == '%'))
+                ++i;
+            put(source.substr(begin, i - begin), ImGui::ColorConvertFloat4ToU32(palette.number));
+            first_token = false;
+            continue;
+        }
         if (is_word(source[i])) {
             const size_t begin = i++;
             while (i < source.size() && is_word(source[i]))
@@ -101,25 +107,18 @@ void add_source_text(ImDrawList *draw_list, ImVec2 position, std::string_view so
             std::transform(upper.begin(), upper.end(), upper.begin(),
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
             ImU32 color = normal;
-            if (first_token && i < source.size() && source[i] == ':')
+            const bool label = first_token && i < source.size() && source[i] == ':';
+            if (label)
                 color = ImGui::ColorConvertFloat4ToU32(palette.label);
             else if (first_token)
-                color = upper == "ORG" ? ImGui::ColorConvertFloat4ToU32(palette.org)
-                                       : is_directive(upper) ? ImGui::ColorConvertFloat4ToU32(palette.directive)
+                color = (upper == "ORG" || upper == ".ORG") ? ImGui::ColorConvertFloat4ToU32(palette.org)
+                                       : is_assembly_directive(upper) ? ImGui::ColorConvertFloat4ToU32(palette.directive)
                                                              : ImGui::ColorConvertFloat4ToU32(palette.mnemonic);
-            else if (is_register(upper))
+            else if (is_register(target, upper))
                 color = ImGui::ColorConvertFloat4ToU32(palette.register_name);
             put(token, color);
-            first_token = false;
-            continue;
-        }
-        if (is_number_start(source[i])) {
-            const size_t begin = i++;
-            while (i < source.size() && (std::isalnum(static_cast<unsigned char>(source[i])) ||
-                                         source[i] == '$' || source[i] == '%'))
-                ++i;
-            put(source.substr(begin, i - begin), ImGui::ColorConvertFloat4ToU32(palette.number));
-            first_token = false;
+            if (label) { put(source.substr(i, 1), color); ++i; }
+            else first_token = false;
             continue;
         }
         put(source.substr(i, 1), normal);
@@ -215,7 +214,8 @@ bool InlineEditor::draw(SourceModel &s,ImVec2 size,const SyntaxPalette *palette)
     if(ImGui::BeginTable("Editable listing",4,ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_RowBg|
         ImGuiTableFlags_Resizable|ImGuiTableFlags_ScrollY,table_size)) {
         ImGui::TableSetupColumn("Line",ImGuiTableColumnFlags_WidthFixed,42);
-        ImGui::TableSetupColumn("Address",ImGuiTableColumnFlags_WidthFixed,64);
+        ImGui::TableSetupColumn("Address",ImGuiTableColumnFlags_WidthFixed,
+            ImGui::CalcTextSize(std::string(target_info(s.target).address_digits(), '0').c_str()).x + 20.f);
         ImGui::TableSetupColumn("Bytes",ImGuiTableColumnFlags_WidthFixed,145);
         ImGui::TableSetupColumn("Source / instruction");
         ImGui::TableSetupScrollFreeze(0,1);ImGui::TableHeadersRow();
@@ -234,7 +234,7 @@ bool InlineEditor::draw(SourceModel &s,ImVec2 size,const SyntaxPalette *palette)
             ImGui::TableNextColumn();
             const ListingLine *line=s.fresh() && row<s.result.listing.size()?&s.result.listing[row]:nullptr;
             if(error)ImGui::TextColored(ImVec4(1,.4f,.35f,1),"ERROR");
-            else if(line && line->address)ImGui::Text("%04X",*line->address);
+            else if(line && line->address)ImGui::Text("%0*X",target_info(s.target).address_digits(),*line->address);
             else ImGui::TextDisabled("----");
             ImGui::TableNextColumn();std::string bytes;
             if(line) for(size_t i=0;i<std::min<size_t>(line->bytes.size(),6);++i) {
@@ -268,7 +268,7 @@ bool InlineEditor::draw(SourceModel &s,ImVec2 size,const SyntaxPalette *palette)
                 text_position.y+=ImGui::GetStyle().FramePadding.y;
                 bool clicked=ImGui::Selectable("##row-source",false,
                     ImGuiSelectableFlags_AllowDoubleClick,ImVec2(0,ImGui::GetFrameHeight()));
-                add_source_text(ImGui::GetWindowDrawList(),text_position,rows[row],active_palette);
+                add_source_text(ImGui::GetWindowDrawList(),text_position,rows[row],active_palette,s.target);
                 if(clicked) {
                     finish(s);selected=row;
                     if(ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))edit(s);

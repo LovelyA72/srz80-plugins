@@ -228,6 +228,11 @@ protected:
     // only the V9958 pays for.  A card may still override it.
     virtual void palette_init();
     virtual void irq_line(uint8_t state) = 0;
+    // Called before vblank changes the field phase.
+    virtual void frame_complete() {}
+    void restore_framebuffer(const uint8_t *pixels) {
+        std::memcpy(m_frame.data(), pixels, m_frame.size());
+    }
 
     void update_line();
 
@@ -763,6 +768,7 @@ void v99x8_device::update_line()
 	// check for start of vblank
 	if (m_scanline == m_vblank_start)
 	{
+		frame_complete();
 		interrupt_start_vblank();
 	}
 

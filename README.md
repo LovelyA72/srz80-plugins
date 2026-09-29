@@ -24,6 +24,11 @@ This writes Windows plugin and tool DLLs to `build/mingwcross-debug/plugins` and
 build. Copy these directories into the matching SRZ80 Windows distribution's
 `bin/` directory; that distribution supplies the MinGW runtime DLLs.
 
+## Assembler
+
+The [Assembler tool](plugins/tools/z80_assembler/README.md) supports Z80,
+MC68000, W65C02, and W65C816, with CPU selections saved per source in the project.
+
 ## Want to use an AI to develop a card instead?
 
 The following information from an AI might be useful for your AI.
