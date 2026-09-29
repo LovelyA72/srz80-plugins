@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "name": "riscv-vsn",
+  "metadata": {
+    "title": "VSN • Four Corners",
+    "description": "RV32IMF walks a four-screen tile world through five VSN renderers: NES 2bpp, planar4, packed 8bpp/16x16, and native 512x480 hires, the packed modes repainting it as a smooth screen-wide RGB555 gradient with extended 16x16 sprites. Send WASD through the vsn.uart console to move the camera; M cycles modes."
+  },
+  "seed": 1,
+  "epoch_ns": 0,
+  "time_mode": "project",
+  "clocks": [4000000, 0, 0],
+  "spaces": [
+    {
+      "name": "rv.memory",
+      "maximum": "0xFFFFFFFF",
+      "resolver": "priority",
+      "unclaimed": "0xFF"
+    }
+  ],
+  "cards": [
+    {
+      "plugin": "ram",
+      "name": "Shared graphics and work RAM (1 MiB)",
+      "space": "rv.memory",
+      "base": "0x00010000",
+      "size": "0x00100000"
+    },
+    {
+      "plugin": "rom",
+      "name": "Four Corners firmware (RV32IMF)",
+      "space": "rv.memory",
+      "base": 0,
+      "image": "demo.rom",
+      "priority": 10
+    },
+    {
+      "plugin": "riscv",
+      "name": "RV32IMF camera controller",
+      "space": "rv.memory",
+      "clock": 0,
+      "reset_vector": 0
+    },
+    {
+      "plugin": "vsn",
+      "name": "VSN scrolling world",
+      "space": "rv.memory",
+      "base": "0x10000000",
+      "size": "0x80",
+      "config": {
+        "io_space": "rv.memory",
+        "memory_space": "rv.memory",
+        "region": "NTSC",
+        "strict_memory": true,
+        "nmi_signal": "NMI",
+        "irq_signal": "IRQ"
+      }
+    },
+    {
+      "plugin": "uart_console",
+      "name": "WASD camera controls",
+      "space": "rv.memory",
+      "base": "0x10000100",
+      "size": 2,
+      "config": {
+        "base": 268435712,
+        "endpoint": "vsn.uart",
+        "transcript_capacity": 65536
+      }
+    }
+  ]
+}

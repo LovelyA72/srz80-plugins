@@ -1,44 +1,8 @@
 // license:BSD-3-Clause
 // copyright-holders:Aaron Giles, Nathan Woods
-/***************************************************************************
-
-    v9938 / v9958 emulation -- SRZ80 card core
-
-    This file is a port of the MAME 0.289 device
-    src/devices/video/v9938.cpp (kept unmodified beside it as v9938.cpp)
-    into a self-contained, host-free core that an SRZ80 card plugin drives.
-
-    Only the MAME framework seams changed; the VDP logic is the original
-    code.  Each changed site carries a "PORT:" comment.  The seams are:
-
-      device_memory_interface / m_vram_space->read_byte|write_byte
-                                     -> m_vram[] byte array (256 KiB + 64 KiB)
-      device_palette_interface        -> m_pen16[] / m_pen256[] tables
-      device_video_interface /
-        screen(), bitmap_rgb32         -> refresh_framebuffer() into an
-                                          internal RGBA8 surface
-      emu_timer / attotime             -> the card calls line_tick() once per
-                                          scanline
-      devcb_write_line m_int_callback  -> irq_line() virtual, driven by the card
-      save_item / NAME                 -> vram_size() snapshot helpers
-      machine().rand()                 -> rng() virtual
-      LOGMASKED                        -> no-op (see the LOGMASKED definition)
-      BIT(x)                           -> local constexpr
-      rgb_t                            -> local rgb32() constexpr
-
-    Rendering notes for reviewers:
-
-      MAME renders every mode into a uint32_t line of internal RGB
-      (0x00RRGGBB) and lets the screen device convert that to the output
-      bitmap.  This port keeps the same mode functions and the same internal
-      RGB values, converts each finished line once (bg_convert_line) into the
-      engine's SRH_VIDEO_RGBA8 byte order, and applies R/B expansion at the
-      same time, so no per-pixel work is duplicated.
-
-      MAME's m_bitmap is also its save-state backing store.  Here it is a
-      pure rendering scratch buffer and is not part of save state.
-
-***************************************************************************/
+// Port of MAME 0.289 src/devices/video/v9938.cpp. The original is kept in
+// v9938.cpp for comparison. PORT comments mark changes to framework calls.
+// The card drives line_tick() and reads the completed RGBA8 surface.
 
 #include <algorithm>
 #include <cstdint>
@@ -48,10 +12,8 @@
 
 namespace srz80::vdp {
 
-// -------------------------------------------------------------------------
 // PORT: replaced the MAME headers (emu.h, v9938.h).  Everything below this
 // block that looks like MAME scaffolding is a local stand-in for it.
-// -------------------------------------------------------------------------
 
 // PORT: the model selectors were macros in MAME; they are typed constants
 // here so a card can name them without the preprocessor leaking a
@@ -412,9 +374,7 @@ private:
     static const v99x8_mode s_modes[];
 };
 
-// =====================================================================
 //  Mode table
-// =====================================================================
 
 const v99x8_device::v99x8_mode v99x8_device::s_modes[] = {
     { 0x02,
@@ -485,17 +445,13 @@ const v99x8_device::v99x8_mode v99x8_device::s_modes[] = {
     }
 };
 
-// =====================================================================
 //  Implementation
 //
 //  Everything below is the MAME 0.289 v9938.cpp body in original order.
 //  Each PORT: comment names the framework call it replaced.  The sections
 //  the card owns in phase 1 are stubbed with the phase that restores them.
-// =====================================================================
 
-// ---------------------------------------------------------------------
 //  Construction / reset
-// ---------------------------------------------------------------------
 
 v99x8_device::v99x8_device(int model, uint32_t vram_size)
 :   m_offset_x(0),
@@ -655,13 +611,9 @@ void v99x8_device::reset_palette()
 	}
 }
 
-// ---------------------------------------------------------------------
 //  Ports, registers, raster, mode select
-// ---------------------------------------------------------------------
 
-// =====================================================================
 //  Palette interface
-// =====================================================================
 
 void v99x8_device::palette_w(uint8_t data)
 {
@@ -726,9 +678,7 @@ void v99x8_device::palette_init()
 		(void)yjk_palette();
 }
 
-// =====================================================================
 //  Raster: MAME's update_line() TIMER_CALLBACK_MEMBER
-// =====================================================================
 
 void v99x8_device::line_tick()
 {
@@ -854,9 +804,7 @@ void v99x8_device::colorbus_button_input(bool switch1_pressed, bool switch2_pres
 	m_button_state = (switch2_pressed? 0x80 : 0x00) | (switch1_pressed? 0x40 : 0x00);
 }
 
-// =====================================================================
 //  CPU port interface
-// =====================================================================
 
 // PORT: screen_update(screen_device&, bitmap_rgb32&, const rectangle&) is
 // gone.  Its copybitmap() role is convert_line(), which the card reads through
@@ -1056,9 +1004,7 @@ void v99x8_device::register_w(uint8_t data)
 		m_cont_reg[17] = (m_cont_reg[17] + 1) & 0x3f;
 }
 
-// =====================================================================
 //  Memory functions
-// =====================================================================
 
 // PORT: vram_read/vram_write keep MAME's GRAPHIC 6/7 address interleave and
 // return 0xff outside the fitted VRAM, which is how the address space's
@@ -1138,9 +1084,7 @@ void v99x8_device::check_int()
 	irq_line(n);
 }
 
-// =====================================================================
 //  Register functions
-// =====================================================================
 
 void v99x8_device::register_write (int reg, int data)
 {
@@ -1225,9 +1169,7 @@ void v99x8_device::register_write (int reg, int data)
 	m_cont_reg[reg] = data;
 }
 
-// =====================================================================
 //  Refresh / render functions
-// =====================================================================
 
 inline bool v99x8_device::v9938_second_field()
 {
@@ -1341,9 +1283,7 @@ void v99x8_device::convert_line(int line)
 	(void)line;
 }
 
-// =====================================================================
 //  Vblank / blink
-// =====================================================================
 
 void v99x8_device::interrupt_start_vblank()
 {
@@ -1371,9 +1311,7 @@ void v99x8_device::interrupt_start_vblank()
 	}
 }
 
-// =====================================================================
 //  Mode select
-// =====================================================================
 
 void v99x8_device::set_mode()
 {
@@ -2448,9 +2386,7 @@ void v99x8_device::device_post_load() // TODO: is there a better way to restore 
 #undef post_linexmaj
 #undef post_lineymaj
 
-// =====================================================================
 //  State
-// =====================================================================
 
 // PORT: MAME's 44 save_item() calls registered every field below with the
 // save system.  The port writes them field-wise into a caller buffer, which
@@ -2624,7 +2560,6 @@ void v99x8_device::rebuild_palette_registers()
 	}
 }
 
-// ---------------------------------------------------------------------
 //  Mode renderers, verbatim from MAME 0.289 v9938.cpp
 //
 //  Extracted from v9938.cpp lines 918-1259.  Only two mechanical
@@ -2632,7 +2567,6 @@ void v99x8_device::rebuild_palette_registers()
 //    m_vram_space->read_byte(X)  ->  vram_barrier(X)
 //    m_vram_space->write_byte(X, V) -> vram_barrier_w(X, V)
 //  Everything else, including the sprite blitters below, is untouched.
-// ---------------------------------------------------------------------
 
 
 void v99x8_device::default_border(uint32_t *ln)
@@ -2978,16 +2912,12 @@ void v99x8_device::mode_graphic4(uint32_t *ln, int line)
 }
 
 
-// ---------------------------------------------------------------------
 //  Sprite scan, verbatim from MAME 0.289 v9938.cpp lines 1551-1802
-// ---------------------------------------------------------------------
 
 
 
-// ---------------------------------------------------------------------
 //  Remaining renderers (mode_unknown and the sprite blitters), verbatim
 //  from MAME 0.289 v9938.cpp lines 1473-1551.
-// ---------------------------------------------------------------------
 
 void v99x8_device::mode_unknown(uint32_t *ln, int line)
 {
@@ -3323,9 +3253,7 @@ void v99x8_device::sprite_mode2 (int line, uint8_t *col)
 
 
 
-// ---------------------------------------------------------------------
 //  High-resolution bitmap modes (MAME packed/interleaved VRAM).
-// ---------------------------------------------------------------------
 
 void v99x8_device::mode_graphic5(uint32_t *ln, int line)
 {

@@ -38,7 +38,7 @@ reset resets registers and releases IRQ while retaining VRAM. Both publish an
 opaque black frame immediately, including when paused or stopped with no raster
 ticks. A running CPU can program the display again as soon as execution resumes.
 
-## Implemented (phases 1–4)
+## Supported features
 
 - **TEXT 1, MULTICOLOR, GRAPHIC 1, GRAPHIC 2, GRAPHIC 3, GRAPHIC 4,
   GRAPHIC 5, GRAPHIC 6, GRAPHIC 7.**
@@ -62,9 +62,9 @@ ticks. A running CPU can program the display again as soon as execution resumes.
   GRAPHIC 7 pixel sources. The 512 KiB YJK colour table is one process-wide
   table built on first use, so a V9938 never pays for it.
 
-Remaining integration work is in [`TODO-VDP.md`](TODO-VDP.md).
+Remaining work is in [`TODO-VDP.md`](TODO-VDP.md).
 
-## What is not covered, and what a guest will see
+## Current limits
 
 | Missing | Behaviour |
 | --- | --- |
@@ -78,19 +78,13 @@ Remaining integration work is in [`TODO-VDP.md`](TODO-VDP.md).
 | `v9938.cpp`, `v9938.h` | Unmodified MAME 0.289 sources, kept as the diff reference. Not compiled. |
 | `v9938_core.cpp` | The port. Every replacement of a MAME framework call carries a `PORT:` comment. |
 | `card.cpp` | The card ABI: config, IO mapping, raster, IRQ, video surface, state, properties. |
-| `v9938_core_test.cpp` | Registers, VRAM, ports, interrupts, PAL geometry, state. |
-| `v9938_bitmap_test.cpp` | Line doubling, interlace, border, mid-frame mode change. |
-| `v9938_command_test.cpp` | Command opcodes, logical operations, transfers, timing and state continuation. |
-| `v9938_yjk_test.cpp` | V9958 identification, the lazy YJK table, screen 12 YJK, screens 10/11 YAE, R#25/R#26/R#27 scrolling, state. |
-| `card_abi_test.cpp` | Loads the built plugin and drives the card ABI with a fake host. |
 
 The core is included by `card.cpp` and compiled nowhere else, so the card is one
 translation unit with no external dependency and is available in GUI-off builds.
 
 ## How the port differs from MAME
 
-The VDP logic is the MAME code; only the framework seams changed. The recurring
-replacements:
+The VDP logic comes from MAME. The port replaces these framework calls:
 
 | MAME | Port |
 | --- | --- |
@@ -104,7 +98,7 @@ replacements:
 | 44 `save_item()` calls | one field-wise `state_size`/`save_state`/`load_state` |
 | `LOGMASKED` | a no-op, so the log sites stay diffable |
 
-Two behaviours are worth knowing because they look like bugs and are not:
+Two reset behaviors affect guest programs:
 
 - **A blank screen at power-on is correct.** `R#1` bit 6 is the display enable;
   reset clears it. `R#0 = 0x02, R#1 = 0x40` is the minimal GRAPHIC 2 pair.
@@ -114,35 +108,15 @@ Two behaviours are worth knowing because they look like bugs and are not:
 
 ## Building and testing
 
-[`examples/z80-vdp`](../../examples/z80-vdp/) is a runnable Z80 project that
-programs this card and paints a test picture, for inspecting the port by eye in
-the GUI.
+[`examples/demos/z80-vdp`](../../../examples/demos/z80-vdp/) is a runnable Z80 project that
+programs this card and paints a test picture in the GUI.
 
-The plugin is wired into the top-level `CMakeLists.txt` as `card_v9938`, built as
-`video_v9938` next to the other cards, with five ctest targets: `v9938_core`,
-`v9938_bitmap`, `v9938_command`, `v9938_yjk` and `card_v9938_abi`.
-
-None of these targets needs the engine, SDL or ImGui, so they build without
-configuring the GUI or waiting for the Rust engine:
+The plugin is wired into the top-level `CMakeLists.txt` as `plugin_v9938` and built
+as `video_v9938` next to the other cards:
 
 ```sh
-cmake -S . -B build/vdp -G "MinGW Makefiles" -DSRZ80_BUILD_GUI=OFF \
-      -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-cmake --build build/vdp --target card_v9938 v9938_core_test v9938_bitmap_test v9938_command_test v9938_yjk_test card_v9938_test
-ctest --test-dir build/vdp -R v9938 --output-on-failure
-```
-
-They also compile standalone, which is how they were developed:
-
-```sh
-cd plugins/vdp
-g++ -std=c++20 -O1 -Wall -Wextra -o /tmp/v9938_core_test v9938_core_test.cpp
-g++ -std=c++20 -O1 -Wall -Wextra -o /tmp/v9938_bitmap_test v9938_bitmap_test.cpp
-g++ -std=c++20 -O1 -Wall -Wextra -o /tmp/v9938_yjk_test v9938_yjk_test.cpp
-g++ -std=c++20 -O1 -Wall -Wextra -DSRZ80_PLUGIN_BUILD -I../../sdk/include -I../../sdk/helpers \
-    -shared -o video_v9938.dll card.cpp
-g++ -std=c++20 -O1 -Wall -Wextra -I../../sdk/include -o /tmp/card_abi_test card_abi_test.cpp
-/tmp/card_abi_test ./video_v9938.dll
+cmake -S . -B build -DSRZ80_BUILD_GUI=OFF
+cmake --build build --target plugin_v9938
 ```
 
 ## Attribution

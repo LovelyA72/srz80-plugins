@@ -1,16 +1,6 @@
 #include <state.hpp>
-// SRZ80 card plugin: Yamaha V9938 / V9958 VDP.
-//
-// This is the host-facing half of the port in v9938_core.cpp.  It owns the
-// card ABI surface and everything the engine can drive:
-//
-//   four IO ports     -> v99x8_device::read()/write()
-//   the raster        -> one self-rescheduling scheduled event per scanline
-//   the IRQ signal    -> v99x8_device::irq_line()
-//   a video surface   -> the last completed field, copied with its captured timing
-//   save/load state   -> the core's field-wise snapshot plus card metadata
-//
-// See README.md for the build wiring and TODO-VDP.md for what is deferred.
+// Yamaha V9938 / V9958 card. This file handles ports, raster scheduling,
+// IRQ, video readback and card state. The VDP logic lives in v9938_core.cpp.
 
 #include <boundary.hpp>
 
@@ -26,15 +16,8 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
-//  Configuration
-// ---------------------------------------------------------------------------
-
-// The V9938 runs from its own crystal, so its raster is a property of the card,
-// not of whichever master clock happens to be running.  The card schedules its
-// scanline event directly in simulated nanoseconds, which means the VDP still
-// produces frames when no CPU clock is enabled at all -- useful while laying a
-// project out.
+// The VDP uses its own crystal. Schedule scanlines in simulated nanoseconds
+// so the raster runs even when the CPU clock is stopped.
 constexpr uint64_t default_raster_clock_hz = 21'477'272;  // MSX V9938 X1
 constexpr uint64_t min_raster_clock_hz = 1'000'000;
 constexpr uint64_t max_raster_clock_hz = 50'000'000;
@@ -47,9 +30,7 @@ struct Settings {
     std::string io_space = "cpu0.io";
 };
 
-// Small hand-written JSON reader, matching the sibling cards that do not link a
-// JSON library.  Unknown keys are rejected so a typo in a project file fails
-// loudly instead of being ignored.
+// Reject unknown config keys so typos fail at load time.
 class Config {
   public:
     explicit Config(const SrhConfig *config) {
@@ -182,14 +163,7 @@ class Config {
     size_t position_ = 0;
 };
 
-// ---------------------------------------------------------------------------
-//  Card
-// ---------------------------------------------------------------------------
-
-// One V9938 scanline is HTOTAL * 2 = 1368 pixel clocks, and the engine clock
-// runs at a quarter of the pixel clock, so the scheduler needs 342 MHz ticks
-// per line.  Keeping the arithmetic in 64-bit integers avoids a floating point
-// divide per scanline.
+// A scanline takes 342 crystal ticks (1368 pixel clocks at 4 pixels per tick).
 constexpr uint64_t line_ticks_numerator = 342ull * 1000ull * 1000ull * 1000ull;
 
 class Card final : public srz80::vdp::v99x8_device {
@@ -202,7 +176,6 @@ class Card final : public srz80::vdp::v99x8_device {
           vram_size_(settings.vram_size),
           model_(settings.model) {}
 
-    // ---- ABI lifecycle -----------------------------------------------------
 
     // Registers the port mapping and the video surface, then brings the chip
     // out of reset.  Both host calls can fail, so the status is propagated
@@ -247,7 +220,6 @@ class Card final : public srz80::vdp::v99x8_device {
     // interrupt flags stay readable through status register 0.
     void connect_irq(SrhHandle signal) { irq_signal_ = signal; }
 
-    // ---- ports -------------------------------------------------------------
 
     SrhStatus port_read(uint64_t address, uint8_t *value) {
         if (!value || address < base_ || address - base_ >= port_count)
@@ -265,7 +237,6 @@ class Card final : public srz80::vdp::v99x8_device {
 
     void set_base(uint64_t base) { base_ = base; }
 
-    // ---- video -------------------------------------------------------------
 
     // Serves the whole allocated surface, including the rows a shorter display
     // mode never draws, so the reported geometry is stable for the UI and the
@@ -287,7 +258,6 @@ class Card final : public srz80::vdp::v99x8_device {
         return SRH_OK;
     }
 
-    // ---- state -------------------------------------------------------------
 
     uint64_t state_size() const {
         return state_header_size + v99x8_device::state_size() + 24 + 2ull * framebuffer_size();
@@ -327,7 +297,6 @@ class Card final : public srz80::vdp::v99x8_device {
         return true;
     }
 
-    // ---- properties --------------------------------------------------------
 
     uint32_t property_count() const { return 6; }
 
@@ -430,10 +399,7 @@ class Card final : public srz80::vdp::v99x8_device {
   private:
     static constexpr uint64_t state_header_size = 4;
 
-    // The raster.  One event per scanline, rescheduled from inside its own
-    // callback.  The delay is a 64-bit integer division of the current crystal
-    // into a line's worth of nanoseconds, so the rate is exact in the
-    // aggregate and never reads a wall clock.
+    // Schedule each line from the current crystal rate in simulated nanoseconds.
     void arm_line() {
         const uint64_t delay = line_ticks_numerator / raster_clock_hz_;
         line_event_ = 0;
@@ -484,9 +450,6 @@ class Card final : public srz80::vdp::v99x8_device {
     uint8_t irq_level_ = 0;
 };
 
-// ---------------------------------------------------------------------------
-//  ABI shims
-// ---------------------------------------------------------------------------
 
 SrhStatus SRH_CALL read(void *context, uint64_t address, uint8_t *value) {
     return srz80::sdk::guard(
