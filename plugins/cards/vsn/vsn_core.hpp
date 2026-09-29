@@ -15,7 +15,7 @@ constexpr RasterProfile profile(Region region) {
     if (region == Region::vga) return {25175000, 800, 525};
     return {21477272, 1364, 262};
 }
-// Pure simulated-time arithmetic, usable without a scheduler or SRZ80.
+// Simulated-time raster clock, independent of the host scheduler.
 struct RasterClock {
     uint64_t hz, numerator, remainder = 0;
     RasterClock(Region region, uint64_t frequency)
@@ -37,15 +37,13 @@ constexpr unsigned control=0x04, mode=0x05, status=0x06, pending=0x08, enable=0x
 
 class Core {
 public:
-    // Low-resolution logical viewport shared by modes 0-4. The host surface is
-    // always the high-resolution 512x480 frame; low-res modes are nearest-
-    // neighbor 2x upscaled by the core, high-res mode renders natively.
+    // Modes 0-4 render at 256x240 and scale to the 512x480 surface.
+    // Mode 5 renders at 512x480.
     static constexpr unsigned width=256, height=240;
     static constexpr unsigned hires_width=512, hires_height=480;
     static constexpr unsigned surface_width=hires_width, surface_height=hires_height;
     static constexpr size_t frame_bytes=surface_width*surface_height*4;
-    // DMA advances a bounded number of bytes per scanline event (one chunk per
-    // scheduler boundary); the whole transfer is never performed in an MMIO write.
+    // DMA transfers at most 16 bytes per scanline event.
     static constexpr unsigned dma_bytes_per_line=16;
     using Color = std::array<uint8_t, 4>;
     explicit Core(Memory &memory, Region region=Region::ntsc, bool strict=false,
@@ -64,17 +62,14 @@ public:
     uint64_t fault_address() const { return fault_address_; }
     bool fault_was_write() const { return fault_write_; }
     uint32_t value(unsigned offset, unsigned bytes) const;
-    // Physical interrupt line levels derived from pending & enable. Vblank is
-    // the only NMI cause; raster, DMA-complete and DMA-fault drive IRQ.
+    // Vblank drives NMI. Raster and DMA causes drive IRQ.
     bool nmi_asserted() const { return registers_[8] & registers_[9] & 0x01; }
     bool irq_asserted() const { return registers_[8] & registers_[9] & 0x0e; }
 
-    // Shared checked memory gateway, including DMA writes. Rendering
-    // calls only fetch; no storage organization is embedded in the adapter.
+    // Checked guest memory access for rendering and DMA.
     uint8_t fetch(uint64_t address);
-    // Reads four contiguous little-endian bytes, preferring the memory's word
-    // transport and falling back to per-byte fetch() so fault accounting (and
-    // the strict AbortLine path) stays identical to the byte path.
+    // Read a little-endian word. Fall back to byte reads when the transport
+    // refuses the word, preserving byte-level fault handling.
     bool fetch_word(uint64_t address, uint32_t &value);
     bool store(uint64_t address, uint8_t value);
     std::vector<uint8_t> save() const;
@@ -101,9 +96,7 @@ private:
     bool strict_;
     std::array<uint8_t,128> registers_{};
     std::unique_ptr<Renderer> renderer_;
-    // Double-buffered scanout: the raster renders into back_ and publishes the
-    // completed frame into front_ at the end of the visible area, so a video
-    // query always copies one complete frame instead of a mid-render image.
+    // Publish back_ to front_ after the visible area finishes.
     std::vector<uint8_t> front_, back_;
     uint32_t line_=0;
     uint64_t frame_=0, faults_=0, fault_address_=0;

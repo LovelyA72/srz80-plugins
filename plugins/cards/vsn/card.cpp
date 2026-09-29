@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// SRZ80 transport/lifecycle adapter. No tile/OAM/palette layout knowledge here.
+// SRZ80 transport and lifecycle adapter.
 #include <boundary.hpp>
 #include <srz80/signals.h>
 #include <nlohmann/json.hpp>
@@ -60,8 +60,7 @@ Settings settings(const SrhConfig *config) {
     return out;
 }
 
-// This is the only class that knows SRZ80 memory handles. A different backing
-// store, MMU or bulk-read extension can replace it without touching rendering.
+// Translate guest memory accesses to SRZ80 host calls.
 class HostMemory final : public Memory {
 public:
     HostMemory(const ShouryoHost &host, SrhHandle owner, SrhHandle space,
@@ -75,8 +74,7 @@ public:
         return host_.read(host_.context,owner_,space_,address,&value)==SRH_OK;
     }
     bool read_word(uint64_t address, uint32_t &value) override {
-        // The host word read needs all four bytes in one allowed mapping; on
-        // any refusal the caller falls back to per-byte reads.
+        // Require all four bytes in the allowed mapping.
         if (!read_word_) return false;
         for (unsigned i=0; i<4; ++i)
             if (!allowed(address+i)) return false;
@@ -119,8 +117,7 @@ public:
             if (nmi_signal_) signals_->release(signals_->context,owner_,nmi_signal_);
             if (irq_signal_) signals_->release(signals_->context,owner_,irq_signal_);
         }
-        // Video has no unregister callback: the ABI host tears down providers
-        // by owner on failed creation/destroy, as for sibling video cards.
+        // The host removes video providers when their owner is destroyed.
     }
     void connect_signals(const SrhHostSignalsV1 *signals, SrhHandle nmi, SrhHandle irq) {
         signals_=signals; nmi_signal_=nmi; irq_signal_=irq;
@@ -182,11 +179,8 @@ public:
         return SRH_OK;
     }
 private:
-    // Recompute both physical interrupt lines from the core's pending/enable
-    // state. Asserting drives the signal high; releasing yields ownership so
-    // other IRQ sources can still drive a shared line. Best-effort: the host
-    // validated the callbacks at creation, and a transient drive failure must
-    // never stop the raster.
+    // Release inactive lines so other devices can drive shared signals.
+    // A failed drive must not stop the raster.
     void drive_signal(SrhHandle signal, bool level, bool &cached) {
         if (!signal || level==cached) return;
         if (level) {
@@ -278,10 +272,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
             !video->register_video_ex || !video->set_video_timing) {
             diagnostic(config,"VSN requires extended video registration and timing callbacks"); return SRH_UNAVAILABLE;
         }
-        // Optional bulk memory read. A missing host.memory.v1 is not an error:
-        // rendering falls back to byte reads. The word read may still refuse
-        // per access (tracing, breakpoints, mapping boundaries), so the core
-        // always retains the byte fallback.
+        // Use word reads when available. Core falls back to byte reads.
         SrhHostReadWord read_word=nullptr;
         extension=nullptr;
         if (host->query(host->context,"host.memory.v1",&extension)==SRH_OK && extension) {
@@ -291,8 +282,7 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
                 memory_ext->read_word)
                 read_word=memory_ext->read_word;
         }
-        // Interrupt signals are optional: an empty nmi_signal/irq_signal config
-        // disables the corresponding line and skips the signals requirement.
+        // Empty signal names disable their interrupt lines.
         const SrhHostSignalsV1 *signals=nullptr;
         SrhHandle nmi=0,irq=0;
         if (!parsed.nmi.empty() || !parsed.irq.empty()) {

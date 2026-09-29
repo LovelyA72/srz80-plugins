@@ -11,8 +11,7 @@ struct VideoLine {
     uint64_t frame;
     unsigned y, width;
     Region region;
-    // Snapshot valid for this call only. Backends decode their own register
-    // formats; they never depend on Core, a scheduler, or an SRZ80 header.
+    // Register snapshot valid only during this call. Backends decode it.
     std::span<const uint8_t,128> registers;
     uint32_t value(unsigned offset, unsigned bytes) const {
         if (bytes>4 || offset>=registers.size() || bytes>registers.size()-offset) return 0;
@@ -26,12 +25,9 @@ class Renderer {
 public:
     virtual ~Renderer() = default;
     virtual void reset() {}
-    // Allows a future frame-based/3D backend to prepare its internal frame.
-    // Raster and output ownership still belong to Core. No guest fetches here;
-    // fetches occur through the checked Memory provided to render_scanline.
+    // Prepare frame state here. Read guest memory in render_scanline().
     virtual void begin_frame(uint64_t) {}
-    // rgba is exactly width*4 bytes in R,G,B,A order, with opaque alpha.
-    // Inputs/output are borrowed only for the duration of this call.
+    // rgba has width*4 bytes in RGBA order. All arguments are borrowed.
     virtual VideoEffects render_scanline(const VideoLine &, Memory &,
                                         std::span<uint8_t> rgba) = 0;
 };

@@ -517,21 +517,21 @@ void canvas(Tool &t) {
             ImGui::EndDisabled();
         }
         const std::string renderer = n.descriptor.value("renderer", "");
-        Json state = t.snapshot.value("runtime", Json::object()).value(n.id, Json::object());
+        Json state = t.snapshot.value("runtime", Json::object()).value(n.local_id, Json::object());
         if (auto it = renderers.find(renderer);
             it != renderers.end() && n.descriptor.value("schema", 1) == 1) {
             const Json config = n.definition.value("config", Json::object());
             Render r{draw, pos, content_scale, state, config, [&](uint32_t value) {
                          if (renderer == "button") {
                              if (value) {
-                                 t.held = n.id;
+                                 t.held = n.local_id;
                                  t.held_owner = t.owner;
                                  t.held_generation = t.generation;
                                  t.held_revision = t.revision;
                              } else
                                  t.held.clear();
                          }
-                         t.send(0, {{"id", n.id}, {"value", value}});
+                         t.send(0, {{"id", n.local_id}, {"value", value}});
                      }};
             it->second(r);
         }

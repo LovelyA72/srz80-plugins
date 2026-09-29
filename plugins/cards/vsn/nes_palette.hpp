@@ -2,7 +2,7 @@
 #pragma once
 #include <cstdint>
 namespace vsn {
-// These literal RGB values are the public VSN palette contract;
+// These RGB values define the VSN palette.
 inline constexpr uint32_t nes_rgb[64] = {
     0x686868,0x102078,0x281080,0x480878,0x680860,0x780838,0x781800,0x602800,
     0x403800,0x184800,0x005018,0x004840,0x003858,0x000000,0x000000,0x000000,

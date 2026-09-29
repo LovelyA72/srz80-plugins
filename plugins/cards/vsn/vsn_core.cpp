@@ -80,10 +80,8 @@ uint8_t Core::fetch(uint64_t address) {
 }
 bool Core::fetch_word(uint64_t address, uint32_t &value) {
     if (address<=UINT32_MAX && memory_.read_word(address,value)) return true;
-    // Word transport unavailable or refused (no host primitive, tracing,
-    // breakpoints, or a mapping boundary): replay as four byte reads so the
-    // per-byte fault accounting and the strict AbortLine path stay identical
-    // to the byte path.
+    // Fall back to byte reads when a word read fails. Each failed byte still
+    // counts as a fault and can abort the line in strict mode.
     value=0;
     bool ok=true;
     for (unsigned i=0; i<4; ++i) {
@@ -110,7 +108,7 @@ void Core::set_reg32(unsigned offset, uint32_t value) {
 }
 void Core::start_dma() {
     if (registers_[0x6d]&1) return;  // ignore a start while a transfer is running
-    registers_[0x6d]=1;              // busy; clears sticky complete and fault
+    registers_[0x6d]=1;              // busy. Clears sticky complete and fault
 }
 void Core::dma_fault() {
     registers_[0x6d]=4;              // fault, not busy
@@ -162,8 +160,7 @@ void Core::render_row(const std::array<uint8_t,128> &snapshot, Memory &gateway,
     if (effects.sprite_overflow) registers_[6] |= 4;
 }
 void Core::upscale_row(const uint8_t *source) {
-    // Nearest-neighbor 2x: one 256-wide logical row becomes two identical
-    // 512-wide surface rows (exact integer scaling, no filtering).
+    // Scale one 256-pixel row into two identical 512-pixel rows.
     for (unsigned r=0; r<2; ++r) {
         uint8_t *dest=back_.data()+(size_t(line_)*2+r)*surface_width*4;
         for (unsigned x=0; x<width; ++x) {
@@ -175,8 +172,7 @@ void Core::upscale_row(const uint8_t *source) {
 }
 void Core::render_line() {
     if (!(registers_[4]&1)) { blank_rows(); return; }
-    // This gateway keeps fault/strict policy independent of rendering style.
-    // Wide addresses survive layout arithmetic all the way to the core check.
+    // Check the full address and apply the rendering fault policy here.
     class Gateway final : public Memory {
     public:
         explicit Gateway(Core &core) : core_(core) {}
@@ -197,8 +193,7 @@ void Core::render_line() {
                     std::span(back_).subspan(size_t(y)*surface_width*4,surface_width*4));
             }
         } else {
-            // Low-resolution modes render one 256-wide row, then upscale it to
-            // fill two surface rows with nearest-neighbor 2x.
+            // Scale one 256-pixel row into two surface rows.
             std::array<uint8_t,width*4> row{};
             render_row(snapshot,gateway,line_,width,std::span<uint8_t>(row));
             upscale_row(row.data());
@@ -255,8 +250,7 @@ bool Core::load(std::span<const uint8_t> data) {
     validator.registers_[8]=data[16]&0x0f;          // W1C interrupt pending
     validator.registers_[0x6d]=data[8+0x6d]&0x07;   // read-only DMA status
     if (!std::equal(validator.registers_.begin(),validator.registers_.end(),data.begin()+8)) return false;
-    // Every shipped output pixel is opaque; the surface has no border since
-    // low-res modes are upscaled to fill it exactly.
+    // Every surface pixel must be opaque.
     const auto valid_frame=[&](size_t off) {
         for (size_t i=0; i<frame_bytes; i+=4)
             if (data[off+i+3]!=255) return false;

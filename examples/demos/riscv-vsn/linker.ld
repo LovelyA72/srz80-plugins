@@ -4,10 +4,7 @@ ENTRY(_start)
 MEMORY
 {
   ROM (rx) : ORIGIN = 0x00000000, LENGTH = 64K
-  /* Assets live in the low half of the 1 MiB RAM card: NES nametables/tiles,
-   * the planar4 map and sprites, and the packed mode maps, per-cell gradient
-   * tile banks, RGB444/RGB555 palettes and extended OAM tables. Firmware
-   * variables and the stack sit above them. */
+  /* Reserve low RAM for graphics. Firmware and stack start at 0xa0000. */
   WORK (rw) : ORIGIN = 0x000a0000, LENGTH = 384K
 }
 SECTIONS

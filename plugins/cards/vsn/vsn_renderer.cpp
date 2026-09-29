@@ -9,11 +9,8 @@ namespace vsn {
 namespace {
 using Color=std::array<uint8_t,4>;
 
-// Line-local direct-mapped byte memo. Every distinct guest address is read at
-// most once per scanline, which removes the per-pixel re-reads of shared
-// descriptor bytes, attribute bytes and tile pattern rows. Entries are tagged
-// with the full address, so an index collision costs one re-read and can never
-// return a wrong value.
+// Cache guest bytes for one scanline. Full address tags prevent collisions
+// from returning the wrong byte.
 class ByteCache {
 public:
     explicit ByteCache(Memory &memory) : memory_(memory) { tags_.fill(~0ull); word_tags_.fill(~0ull); }
@@ -26,10 +23,7 @@ public:
         values_[slot] = value;
         return value;
     }
-    // Word-granular fetch for a four-byte chunk the caller guarantees is fully
-    // needed (the packed tile rows: 4, 8, or 16 contiguous bytes). The chunk
-    // address is 4-aligned and stays inside the tile row, so a word read never
-    // over-reads past the data the renderer intends to touch.
+    // Read one aligned word within the tile row.
     uint8_t fetch_word(uint64_t address, unsigned byte) {
         const uint32_t slot = uint32_t((address * 0x9e3779b97f4a7c15ull) >> (64 - kBits));
         if (word_tags_[slot] == address) return uint8_t(word_values_[slot] >> (byte * 8));
@@ -48,10 +42,8 @@ private:
     std::array<uint32_t, 1u << kBits> word_values_;
 };
 
-// Palette and sprite-table latch shared across a frame. These are stable inputs
-// for a whole frame in normal operation, so they are fetched once at the first
-// visible line that needs them and reused until the frame (or the register that
-// defines their source/format) changes.
+// Fetch palette and sprite data on first use each frame. Source or format
+// changes invalidate the cached data.
 struct FrameLatch {
     std::array<Color,256> palette{};
     std::array<uint8_t,512> oam{};
@@ -63,8 +55,7 @@ struct FrameLatch {
     uint8_t oam_mode = 0xff;
 };
 
-// A line-local storage decoder. All video layout knowledge stays here/layout;
-// transport and checked fault policy belong to the supplied Memory gateway.
+// Decode one scanline from guest memory.
 class TileLine {
 public:
     TileLine(const VideoLine &line, Memory &memory, std::span<uint8_t> output,
@@ -82,7 +73,7 @@ public:
             put(x, background[x] ? latch_.palette[background[x]] : backdrop);
         }
         if (control & 4) {
-            // NES and planar4 keep the 256-byte OAM and planar decode; every
+            // NES and planar4 keep the 256-byte OAM and planar decode. Every
             // packed mode reads the 512-byte extended table.
             if (r(5)==0 || r(5)==2) sprites(background);
             else extended_sprites(background);
@@ -110,8 +101,8 @@ private:
         index &= (r(0x18)&1) ? 0x30 : 0x3f;
         const auto rgb=nes_rgb[index];
         Color color{uint8_t(rgb>>16),uint8_t(rgb>>8),uint8_t(rgb),255};
-        // VSN digital emphasis: attenuate unselected channels by 3/4;
-        // selecting all three attenuates all three, with integer truncation.
+        // VSN digital emphasis attenuates unselected channels by 3/4.
+        // Selecting all three attenuates all channels, with integer truncation.
         for (unsigned channel=0; channel<3; ++channel)
             if (emphasis && (emphasis==7 || !(emphasis & (1u<<channel))))
                 color[channel]=uint8_t(unsigned(color[channel])*3/4);
@@ -131,7 +122,7 @@ private:
                 else palette[i]=nes_color(fetch_direct(base+i));
             }
         } else {
-            // Modes 3/4/5 use linear RGB555; packed4 and planar4 use RGB444.
+            // Modes 3/4/5 use linear RGB555. Packed4 and planar4 use RGB444.
             const bool rgb555=(mode==3 || mode==4 || mode==5);
             for (unsigned i=0; i<256; ++i) {
                 const uint16_t low=fetch_direct(base+i*2);
@@ -158,9 +149,7 @@ private:
         const auto high=cache_.fetch(address+8);
         return layout::planar2(low,high,x);
     }
-    // Compute the row-invariant terms once per scanline. Everything that depends
-    // only on y (scroll, map wrap, descriptor row, in-tile row) is hoisted here
-    // so background_pixel() only adds the per-pixel x terms.
+    // Calculate shared row addresses and offsets once per scanline.
     void prepare_row() {
         const uint8_t mode=r(5);
         scroll_x_=uint16_t(v(0x14,2));
@@ -202,7 +191,7 @@ private:
         if (r(5)==2) {
             // VT planar: same 16-bit descriptor map as packed4, tiles decoded as
             // 2bpp or 4bpp bitplanes over a linear base. Pixel zero is the
-            // backdrop; otherwise palette index is bank*stride+pixel.
+            // backdrop. Otherwise palette index is bank*stride+pixel.
             x %= wrap_x_;
             const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
             const unsigned tile=descriptor&4095, bank=descriptor>>12, lx=x&7;
@@ -228,9 +217,7 @@ private:
             return cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*64+uint64_t(tile_row_)*8+(lx&~3u),lx&3);
         }
         if (r(5)==4 || r(5)==5) {
-            // Packed 16x16 8bpp: tile rows span 16 map columns and 16 pixel rows.
-            // Mode 5 (high resolution) uses the same 16x16x8 packed tile format
-            // as mode 4, rendered natively at 512x480 instead of 256x240.
+            // Modes 4 and 5 share 16x16 8bpp tiles. Mode 5 uses 512x480.
             x %= wrap_x_;
             const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/16)*2);
             const unsigned lx=x&15;
@@ -292,9 +279,7 @@ private:
             }
         }
     }
-    // Extended 512-byte table: 32 records of 16 bytes with signed top-left
-    // coordinates, so partial and fully offscreen sprites clip per pixel.
-    // Record order is priority order and the lowest record wins pixel ties.
+    // Extended sprites use 32 records. Earlier records win pixel ties.
     void extended_sprites(const std::array<uint8_t,512> &background) {
         latch_oam();
         std::array<bool,512> occupied{};
@@ -307,7 +292,7 @@ private:
             if (line<sprite.y || line>=sprite.y+int(height)) continue;
             unsigned row=unsigned(line-sprite.y);
             if (sprite.flip_y) row=height-1-row;
-            // 8x16 pairs two consecutive 8x8 tiles; other sizes are one tile.
+            // 8x16 pairs two consecutive 8x8 tiles. Other sizes are one tile.
             unsigned tile=sprite.tile, tile_row=row;
             if (sprite.size==1) { tile=(tile&~1u)+row/8; tile_row=row%8; }
             const unsigned columns=sprite.size==2 ? 16 : 8;
@@ -330,7 +315,7 @@ private:
                 if (!pixel) continue;
                 if (occupied[unsigned(x)]) continue;
                 occupied[unsigned(x)]=true;
-                // 8bpp pixels select the palette directly; 4bpp pixels add the
+                // 8bpp pixels select the palette directly. 4bpp pixels add the
                 // record palette as a 16-entry bank.
                 const unsigned index=bpp8 ? pixel : unsigned(sprite.palette)*16+pixel;
                 if (!sprite.behind || !background[unsigned(x)]) put(unsigned(x),latch_.palette[index]);

@@ -3,8 +3,7 @@
 #include <cstdint>
 
 namespace vsn::layout {
-// Storage layout only: deliberately separate from host memory transport and
-// pixel composition. Widen BEFORE arithmetic; the core rejects > UINT32_MAX.
+// Widen addresses before arithmetic. Core rejects values above UINT32_MAX.
 constexpr uint64_t packed_map(uint32_t base, uint16_t stride, unsigned x, unsigned y) {
     return uint64_t(base) + uint64_t(y / 8) * stride + (x / 8) * 2;
 }
