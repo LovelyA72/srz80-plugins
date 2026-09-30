@@ -6,7 +6,9 @@ local scan_pos, scan_duration, scan_loop_samples, scan_fm, scan_pcm, first_comma
 local play, pcm_tick
 
 local function byte(pos)
-  assert(pos >= 0 and pos < file_end, string.format("truncated VGM at 0x%X", pos))
+  if pos < 0 or pos >= file_end then
+    error(string.format("truncated VGM at 0x%X", pos))
+  end
   return data:byte(pos + 1)
 end
 
@@ -29,15 +31,18 @@ local function command(pos)
   elseif op == 0x54 then size = 3
   elseif op == 0xC0 then size = 4
   elseif op == 0x67 then
-    assert(byte(pos + 1) == 0x66 and byte(pos + 2) == 0x80,
-      string.format("unsupported data block at 0x%X", pos))
+    if byte(pos + 1) ~= 0x66 or byte(pos + 2) ~= 0x80 then
+      error(string.format("unsupported data block at 0x%X", pos))
+    end
     local count = dword(pos + 3)
     assert(count >= 8, "short SegaPCM ROM block")
     size = 7 + count
   else
     error(string.format("unsupported VGM command 0x%02X at 0x%X", op, pos))
   end
-  assert(pos + size <= file_end, string.format("truncated command at 0x%X", pos))
+  if pos + size > file_end then
+    error(string.format("truncated command at 0x%X", pos))
+  end
   return size, wait
 end
 
@@ -91,7 +96,8 @@ local function scan()
     scan_duration = scan_duration + wait
     scan_pos = scan_pos + size
   end
-  card.after(1, scan)
+  -- Give the simulation time between validation batches.
+  card.after(1000000, scan)
 end
 
 local function opz_write(reg, value)
