@@ -1,7 +1,8 @@
 local SPACE, OPZ, DAC_BASE = "vgm.io", 0x80, 0x100
+local opm2opz = require("opm2opz.lua")
 local VGM_RATE, PCM_RATE, PCM_CLOCK = 44100, 31250, 4000000
 local data, file_end, cursor, loop_at, samples, start_ns, rom, voices
-local pan, fraction, levels, tick_number
+local tick_number
 local scan_pos, scan_duration, scan_loop_samples, scan_fm, scan_pcm, first_command
 local play, pcm_tick
 
@@ -105,31 +106,8 @@ local function opz_write(reg, value)
   card.write(SPACE, OPZ + 1, value)
 end
 
-local function opm_write(reg, value)
-  if reg >= 0x20 and reg <= 0x27 then
-    local ch = reg & 7
-    local old = pan[ch]
-    pan[ch] = value >> 6
-    opz_write(reg, (value & 0x3F) | ((pan[ch] & 2) ~= 0 and 0x80 or 0))
-    opz_write(0x30 + ch, (fraction[ch] & 0xFE) | (pan[ch] == 3 and 1 or 0))
-    if (old == 0) ~= (pan[ch] == 0) then
-      for op = 0, 3 do
-        local index = ch + op * 8
-        opz_write(0x60 + index, pan[ch] == 0 and 0x7F or levels[index])
-      end
-    end
-  elseif reg >= 0x30 and reg <= 0x37 then
-    local ch = reg & 7
-    fraction[ch] = value
-    opz_write(reg, (value & 0xFE) | (pan[ch] == 3 and 1 or 0))
-  elseif reg >= 0x60 and reg <= 0x7F then
-    local index = reg - 0x60
-    levels[index] = value
-    opz_write(reg, pan[index & 7] == 0 and 0x7F or value)
-  else
-    opz_write(reg, value)
-  end
-end
+local opm = opm2opz.new({write = opz_write, time_ns = card.time_ns,
+  after = card.after, sample_rate = 44100})
 
 local function pcm_write(address, value)
   local ch = (address >> 3) & 15
@@ -180,7 +158,7 @@ play = function()
       end
       cursor = loop_at
     else
-      if op == 0x54 then opm_write(byte(cursor + 1), byte(cursor + 2))
+      if op == 0x54 then opm:write(byte(cursor + 1), byte(cursor + 2))
       elseif op == 0xC0 then pcm_write(word(cursor + 1), byte(cursor + 3))
       elseif op == 0x67 then rom_block(cursor) end
       samples = samples + wait
@@ -219,7 +197,7 @@ pcm_tick = function()
 end
 
 function on_reset(cold)
-  data = project.read("outrun.vgm")
+  data = project.read("test.vgm")
   first_command = validate()
   rom = string.rep("\128", 0x80000)
   voices = {}
@@ -227,9 +205,7 @@ function on_reset(cold)
     voices[ch] = {address = 0xFFFF00, loop = 0xFFFF, finish = 0xFF,
       step = 0xFF, left = 0x7F, right = 0x7F, control = 0xFF}
   end
-  pan, fraction, levels = {}, {}, {}
-  for ch = 0, 7 do pan[ch], fraction[ch] = 0, 0 end
-  for index = 0, 31 do levels[index] = 0 end
+  opm:reset()
   scan_pos, scan_duration, scan_loop_samples, scan_fm, scan_pcm =
     first_command, 0, nil, 0, 0
   scan()
