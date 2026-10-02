@@ -2,6 +2,7 @@
 #pragma once
 #include "vsn_memory.hpp"
 #include "vsn_renderer.hpp"
+#include "vsn_registers.hpp"
 #include <array>
 #include <cstdint>
 #include <span>
@@ -26,15 +27,6 @@ struct RasterClock {
         return accumulated / hz;
     }
 };
-namespace reg {
-constexpr unsigned control=0x04, mode=0x05, status=0x06, pending=0x08, enable=0x09,
-    scroll_x=0x14, scroll_y=0x16, nes_color=0x18, map=0x20, bg_tiles=0x24,
-    row_stride=0x28, map_width=0x2a, map_height=0x2b, page_x=0x2c, page_y=0x2e,
-    sprites=0x30, sprite_tiles=0x34, nes_pattern=0x38, planar=0x39,
-    palette=0x40, backdrop=0x45, raster=0x50,
-    dma_src=0x60, dma_dst=0x64, dma_count=0x68, dma_cmd=0x6c, dma_status=0x6d, dma_fill=0x6e;
-}
-
 class Core {
 public:
     // Modes 0-4 render at 256x240 and scale to the 512x480 surface.

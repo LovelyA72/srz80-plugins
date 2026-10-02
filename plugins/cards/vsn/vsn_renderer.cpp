@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "vsn_renderer.hpp"
 #include "vsn_layout.hpp"
+#include "vsn_registers.hpp"
 #include "nes_palette.hpp"
 #include <array>
-#include <limits>
 
 namespace vsn {
 namespace {
@@ -46,6 +46,10 @@ private:
 // changes invalidate the cached data.
 struct FrameLatch {
     std::array<Color,256> palette{};
+    std::array<uint8_t,256> alpha{};
+    uint64_t alpha_frame = ~0ull;
+    uint32_t alpha_base = ~0u;
+    uint8_t alpha_mode = 0xff;
     std::array<uint8_t,512> oam{};
     uint64_t palette_frame = ~0ull;
     uint32_t palette_base = ~0u;
@@ -55,6 +59,50 @@ struct FrameLatch {
     uint8_t oam_mode = 0xff;
 };
 
+struct BackgroundRegisters {
+    unsigned map, tiles, scroll_x, scroll_y, stride, columns, rows, tile_size;
+    unsigned control, enable_mask, depth, depth_mask;
+};
+
+constexpr std::array<BackgroundRegisters,2> background_registers{{
+    {reg::bg0_map,reg::bg0_tiles,reg::bg0_scroll_x,reg::bg0_scroll_y,
+     reg::bg0_row_stride,reg::bg0_map_width,reg::bg0_map_height,reg::bg0_tile_size,
+     reg::bg0_control,1,reg::bg0_control,2},
+    {reg::map,reg::bg_tiles,reg::scroll_x,reg::scroll_y,
+     reg::row_stride,reg::map_width,reg::map_height,reg::bg_tile_size,
+     reg::control,2,reg::planar,1}
+}};
+
+struct BackgroundConfig {
+    uint32_t map_base, tile_base;
+    unsigned scroll_x, scroll_y, stride, columns, rows;
+    layout::PackedGeometry geometry;
+    uint8_t opacity;
+    bool enabled, planar4;
+};
+
+struct BackgroundRow {
+    BackgroundConfig config{};
+    uint64_t descriptor_row=0;
+    unsigned wrap_x=0, tile_row=0;
+};
+
+struct Pixel {
+    uint8_t index=0, alpha=0;
+};
+
+struct SpritePixel {
+    uint8_t index=0;
+    bool behind=false;
+};
+
+Color blend(Color destination, const Color &source, unsigned alpha) {
+    for (unsigned c=0; c<3; ++c)
+        destination[c]=uint8_t((unsigned(source[c])*alpha +
+                               unsigned(destination[c])*(255-alpha)+127)/255);
+    return destination;
+}
+
 // Decode one scanline from guest memory.
 class TileLine {
 public:
@@ -63,20 +111,42 @@ public:
         : line_(line), memory_(memory), output_(output), latch_(latch), cache_(memory) {}
     VideoEffects render() {
         latch_palette();
-        prepare_row();
-        const auto control=r(4);
-        const auto backdrop=latch_.palette[r(5) == 0 ? 0 : r(0x45)];
-        std::array<uint8_t,512> background{};
-        for (unsigned x=0; x<line_.width; ++x) {
-            if ((control & 2) && (r(5) != 0 || x>=8 || (control & 8)))
-                background[x]=background_pixel(x);
-            put(x, background[x] ? latch_.palette[background[x]] : backdrop);
+        const bool nes=r(reg::mode)==0;
+        std::array<BackgroundRow,2> rows{};
+        rows[1]=prepare_row(background_config(1));
+        if (!nes) {
+            rows[0]=prepare_row(background_config(0));
+            if (rows[0].config.enabled || rows[1].config.enabled) latch_alpha();
         }
-        if (control & 4) {
-            // NES and planar4 keep the 256-byte OAM and planar decode. Every
-            // packed mode reads the 512-byte extended table.
-            if (r(5)==0 || r(5)==2) sprites(background);
-            else extended_sprites(background);
+        std::array<std::array<Pixel,512>,2> backgrounds{};
+        for (unsigned layer=0; layer<2; ++layer) {
+            const auto &row=rows[layer];
+            if (!row.config.enabled) continue;
+            for (unsigned x=0; x<line_.width; ++x) {
+                if (nes && x<8 && !(r(reg::control)&8)) continue;
+                const auto index=nes ? nes_background_pixel(x) : background_pixel(row,x);
+                if (!index) continue;
+                const unsigned alpha=(!nes && (r(reg::palette_alpha_control)&1))
+                    ? latch_.alpha[index] : 255;
+                backgrounds[layer][x]={index,uint8_t((alpha*row.config.opacity+127)/255)};
+            }
+        }
+        std::array<SpritePixel,512> selected{};
+        if (r(reg::control)&4) {
+            if (nes || r(reg::mode)==2) sprites(backgrounds[1],selected);
+            else extended_sprites(selected);
+        }
+        const auto backdrop=latch_.palette[nes ? 0 : r(reg::backdrop)];
+        for (unsigned x=0; x<line_.width; ++x) {
+            Color color=backdrop;
+            const auto sprite=selected[x];
+            if (sprite.index && sprite.behind) color=latch_.palette[sprite.index];
+            for (const auto &background : backgrounds) {
+                const auto pixel=background[x];
+                if (pixel.alpha) color=blend(color,latch_.palette[pixel.index],pixel.alpha);
+            }
+            if (sprite.index && !sprite.behind) color=latch_.palette[sprite.index];
+            put(x,color);
         }
         return effects_;
     }
@@ -125,8 +195,8 @@ private:
             // Modes 3/4/5 use linear RGB555. Packed4 and planar4 use RGB444.
             const bool rgb555=(mode==3 || mode==4 || mode==5);
             for (unsigned i=0; i<256; ++i) {
-                const uint16_t low=fetch_direct(base+i*2);
-                const uint16_t word=low | (uint16_t(fetch_direct(base+i*2+1))<<8);
+                const uint16_t low=fetch_direct(uint64_t(base)+i*2);
+                const uint16_t word=low | (uint16_t(fetch_direct(uint64_t(base)+i*2+1))<<8);
                 if (rgb555) {
                     const auto expand=[](uint16_t v){ return uint8_t((v<<3)|(v>>2)); };
                     palette[i]={expand((word>>10)&31),expand((word>>5)&31),expand(word&31),255};
@@ -135,6 +205,16 @@ private:
                                 uint8_t((word&15)*17),255};
             }
         }
+    }
+    void latch_alpha() {
+        if (!(r(reg::palette_alpha_control)&1)) return;
+        const uint32_t base=v(reg::palette_alpha,4);
+        if (latch_.alpha_base==base && latch_.alpha_frame==line_.frame &&
+            latch_.alpha_mode==r(reg::mode)) return;
+        for (unsigned i=0; i<256; ++i) latch_.alpha[i]=fetch_direct(uint64_t(base)+i);
+        latch_.alpha_base=base;
+        latch_.alpha_frame=line_.frame;
+        latch_.alpha_mode=r(reg::mode);
     }
     void latch_oam() {
         const uint32_t base=v(0x30,4);
@@ -149,90 +229,67 @@ private:
         const auto high=cache_.fetch(address+8);
         return layout::planar2(low,high,x);
     }
-    // Calculate shared row addresses and offsets once per scanline.
-    void prepare_row() {
-        const uint8_t mode=r(5);
-        scroll_x_=uint16_t(v(0x14,2));
-        map_base_=v(0x20,4);
-        tile_base_=v(0x24,4);
-        const uint32_t scrolled_y=uint32_t(line_.y)+v(0x16,2);
-        const unsigned map_w=r(0x2a) ? r(0x2a) : 256;
-        const unsigned map_h=r(0x2b) ? r(0x2b) : 256;
-        if (mode==4 || mode==5) {
-            stride_=uint16_t(v(0x28,2));
-            wrap_x_=map_w*16;
-            y_wrapped_=scrolled_y%(map_h*16);
-            desc_row_=uint64_t(y_wrapped_/16)*stride_;
-            tile_row_=y_wrapped_&15;
-        } else if (mode>=1 && mode<=3) {
-            stride_=uint16_t(v(0x28,2));
-            wrap_x_=map_w*8;
-            y_wrapped_=scrolled_y%(map_h*8);
-            desc_row_=uint64_t(y_wrapped_/8)*stride_;
-            tile_row_=y_wrapped_&7;
-        } else { // mode 0 (NES)
-            stride_x_=uint16_t(v(0x2c,2));
-            stride_y_=uint16_t(v(0x2e,2));
-            nes_page_y_=uint64_t((scrolled_y%480)/240)*stride_y_;
-            nes_row_y_=scrolled_y%240;
-            tile_row_=nes_row_y_&7;
-        }
+    BackgroundConfig background_config(unsigned layer) const {
+        const auto &offsets=background_registers[layer];
+        const unsigned mode=r(reg::mode);
+        const unsigned selector=r(offsets.tile_size);
+        const auto geometry=mode==5 ? layout::hires_geometry(selector) :
+            mode==4 ? layout::PackedGeometry{16,16} : layout::PackedGeometry{8,8};
+        const unsigned columns=r(offsets.columns);
+        const unsigned rows=r(offsets.rows);
+        const uint8_t opacity=mode==0 ? 255 : uint8_t(((r(reg::bg_alpha)>>(layer*2))&3)*85);
+        const bool enabled=(r(offsets.control)&offsets.enable_mask) && opacity!=0 &&
+                           (layer==1 || mode!=0);
+        return {v(offsets.map,4),v(offsets.tiles,4),
+                v(offsets.scroll_x,2),v(offsets.scroll_y,2),v(offsets.stride,2),
+                columns ? columns : 256, rows ? rows : 256, geometry, opacity, enabled,
+                bool(r(offsets.depth)&offsets.depth_mask)};
     }
-    uint8_t background_pixel(unsigned x) {
-        x+=scroll_x_;
-        if (r(5)==1) {
-            x %= wrap_x_;
-            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
-            const unsigned lx=x&7;
-            const auto row=cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*32+uint64_t(tile_row_)*4,lx/2);
-            const auto pixel=layout::nibble(row,lx);
-            return pixel ? uint8_t((descriptor>>12)*16+pixel) : 0;
+    BackgroundRow prepare_row(const BackgroundConfig &config) const {
+        const unsigned y=(line_.y+config.scroll_y)%(config.rows*config.geometry.height);
+        return {config,layout::packed_map(0,uint16_t(config.stride),0,y,config.geometry),
+                config.columns*config.geometry.width,y%config.geometry.height};
+    }
+    uint8_t background_pixel(const BackgroundRow &row, unsigned x) {
+        const auto &config=row.config;
+        x=(x+config.scroll_x)%row.wrap_x;
+        const uint16_t descriptor=descriptor_at(uint64_t(config.map_base)+row.descriptor_row+
+                                               uint64_t(x/config.geometry.width)*2);
+        const unsigned tile=descriptor&4095, bank=descriptor>>12;
+        const unsigned lx=x%config.geometry.width;
+        if (r(reg::mode)==1) {
+            const auto address=layout::packed4(config.tile_base,tile,0,row.tile_row);
+            const auto pixel=layout::nibble(cache_.fetch_word(address,lx/2),lx);
+            return pixel ? uint8_t(bank*16+pixel) : 0;
         }
-        if (r(5)==2) {
-            // VT planar: same 16-bit descriptor map as packed4, tiles decoded as
-            // 2bpp or 4bpp bitplanes over a linear base. Pixel zero is the
-            // backdrop. Otherwise palette index is bank*stride+pixel.
-            x %= wrap_x_;
-            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
-            const unsigned tile=descriptor&4095, bank=descriptor>>12, lx=x&7;
-            if (r(0x39)&1) {
-                const auto p0=cache_.fetch(layout::planar_tile(tile_base_,tile,0,tile_row_,4));
-                const auto p1=cache_.fetch(layout::planar_tile(tile_base_,tile,1,tile_row_,4));
-                const auto p2=cache_.fetch(layout::planar_tile(tile_base_,tile,2,tile_row_,4));
-                const auto p3=cache_.fetch(layout::planar_tile(tile_base_,tile,3,tile_row_,4));
-                const auto pixel=layout::planar4(p0,p1,p2,p3,lx);
-                return pixel ? uint8_t(bank*16+pixel) : 0;
+        if (r(reg::mode)==2) {
+            const unsigned planes=config.planar4 ? 4 : 2;
+            unsigned pixel=0;
+            for (unsigned plane=0; plane<planes; ++plane) {
+                const auto bits=cache_.fetch(layout::planar_tile(config.tile_base,tile,plane,
+                                                               row.tile_row,planes));
+                pixel|=((bits>>(7-lx))&1)<<plane;
             }
-            const auto p0=cache_.fetch(layout::planar_tile(tile_base_,tile,0,tile_row_,2));
-            const auto p1=cache_.fetch(layout::planar_tile(tile_base_,tile,1,tile_row_,2));
-            const auto pixel=layout::planar2(p0,p1,lx);
-            return pixel ? uint8_t(bank*4+pixel) : 0;
+            return pixel ? uint8_t(bank*(1u<<planes)+pixel) : 0;
         }
-        if (r(5)==3) {
-            // Packed 8bpp: one byte per pixel. The palette index is the pixel
-            // value, so descriptor bank bits are ignored.
-            x %= wrap_x_;
-            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/8)*2);
-            const unsigned lx=x&7;
-            return cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*64+uint64_t(tile_row_)*8+(lx&~3u),lx&3);
-        }
-        if (r(5)==4 || r(5)==5) {
-            // Modes 4 and 5 share 16x16 8bpp tiles. Mode 5 uses 512x480.
-            x %= wrap_x_;
-            const uint16_t descriptor=descriptor_at(map_base_+desc_row_+uint64_t(x/16)*2);
-            const unsigned lx=x&15;
-            return cache_.fetch_word(tile_base_+uint64_t(descriptor&4095)*256+uint64_t(tile_row_)*16+(lx&~3u),lx&3);
-        }
-        x%=512;
-        const auto page=map_base_+uint64_t(x/256)*stride_x_+nes_page_y_;
+        return cache_.fetch_word(layout::packed8(config.tile_base,tile,lx&~3u,
+                                                 row.tile_row,config.geometry),lx&3);
+    }
+    uint8_t nes_background_pixel(unsigned x) {
+        x=(x+v(reg::scroll_x,2))%512;
+        const unsigned y=(line_.y+v(reg::scroll_y,2))%480;
+        const auto page=layout::nes_page(v(reg::map,4),uint16_t(v(reg::page_x,2)),
+                                        uint16_t(v(reg::page_y,2)),x,y);
         x%=256;
-        const auto tile=cache_.fetch(page+(nes_row_y_/8)*32+x/8);
-        const auto attribute=cache_.fetch(layout::nes_attribute(page,x/8,nes_row_y_/8));
-        const auto bank=(attribute>>layout::attribute_shift(x/8,nes_row_y_/8))&3;
-        const auto pixel=pattern(layout::nes_pattern(tile_base_,r(0x38)&1,tile,tile_row_),x&7);
+        const unsigned tile_y=(y%240)/8, tile_x=x/8;
+        const auto tile=cache_.fetch(page+tile_y*32+tile_x);
+        const auto attribute=cache_.fetch(layout::nes_attribute(page,tile_x,tile_y));
+        const auto bank=(attribute>>layout::attribute_shift(tile_x,tile_y))&3;
+        const auto pixel=pattern(layout::nes_pattern(v(reg::bg_tiles,4),r(reg::nes_pattern)&1,
+                                                     tile,y%8),x&7);
         return pixel ? uint8_t(bank*4+pixel) : 0;
     }
-    void sprites(const std::array<uint8_t,512> &background) {
+    void sprites(const std::array<Pixel,512> &background, std::array<SpritePixel,512> &selected) {
         latch_oam();
         std::array<bool,512> occupied{};
         const unsigned height=(r(4)&64) ? 16 : 8;
@@ -269,18 +326,18 @@ private:
                     ? layout::planar4(planes[0],planes[1],planes[2],planes[3],col)
                     : layout::planar2(planes[0],planes[1],col);
                 if (!pixel) continue;
-                if (i==0 && background[x] && x!=255) effects_.sprite_zero=true;
+                if (i==0 && background[x].alpha && x!=255) effects_.sprite_zero=true;
                 if (occupied[x]) continue;
                 occupied[x]=true;
                 const unsigned index=planar
                     ? unsigned(sprite.palette)*(sprite4bpp?16:4)+pixel
                     : 16+unsigned(sprite.palette)*4+pixel;
-                if (!sprite.behind || !background[x]) put(x,latch_.palette[index]);
+                selected[x]={uint8_t(index),sprite.behind};
             }
         }
     }
     // Extended sprites use 32 records. Earlier records win pixel ties.
-    void extended_sprites(const std::array<uint8_t,512> &background) {
+    void extended_sprites(std::array<SpritePixel,512> &selected) {
         latch_oam();
         std::array<bool,512> occupied{};
         const bool bpp8=(r(5)==3 || r(5)==4 || r(5)==5);
@@ -318,7 +375,7 @@ private:
                 // 8bpp pixels select the palette directly. 4bpp pixels add the
                 // record palette as a 16-entry bank.
                 const unsigned index=bpp8 ? pixel : unsigned(sprite.palette)*16+pixel;
-                if (!sprite.behind || !background[unsigned(x)]) put(unsigned(x),latch_.palette[index]);
+                selected[unsigned(x)]={uint8_t(index),sprite.behind};
             }
         }
     }
@@ -327,13 +384,6 @@ private:
     std::span<uint8_t> output_;
     FrameLatch &latch_;
     ByteCache cache_;
-    // Per-scanline row invariants, filled once by prepare_row().
-    uint16_t scroll_x_=0;
-    uint64_t map_base_=0;
-    uint32_t tile_base_=0;
-    uint16_t stride_=0, stride_x_=0, stride_y_=0;
-    uint32_t wrap_x_=0, y_wrapped_=0, tile_row_=0, nes_row_y_=0;
-    uint64_t desc_row_=0, nes_page_y_=0;
     VideoEffects effects_{};
 };
 class TileRenderer final : public Renderer {

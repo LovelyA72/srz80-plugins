@@ -1,14 +1,20 @@
-# SR Visual Synthesizer (VSN), native contract revision 1
+# SR Visual Synthesizer (VSN), native contract revision 3
 
 VSN reads graphics from SRZ80 shared memory. It supports NES graphics data,
 packed and planar tile formats, RGB444 and RGB555 palettes, sprites, raster
-interrupts, and copy/fill DMA. Mode 5 renders at 512x480. VSN has its own
-register interface. Unimplemented registers read zero and ignore writes.
+interrupts, and copy/fill DMA. Mode 5 renders at 512x480 with selectable
+16x16, 8x16 or 8x8 background tiles. VSN has its own
+register interface. Modes 1–5 have BG0 below BG1, with independent scrolling,
+2-bit layer opacity and optional palette alpha. Mode 0 retains one NES
+background. Unimplemented registers read zero and ignore writes.
 
 ## Installation and configuration
 
 Plugin ID `vsn`, category Video, display name SR Visual Synthesizer. Default
 mapping: `cpu0.io`, base `0x80`, exactly 128 bytes. No rack clock subscription.
+The descriptor declares separate I/O and Graphics memory selectors. The host
+writes their selected names to `io_space` and `memory_space` and keeps these
+keys out of the other-settings JSON editor. Both may select the same space.
 Configuration is a JSON object. Unknown keys and wrong types fail creation.
 
 | Key | Default | Accepted value |
@@ -47,11 +53,11 @@ atomic across scanline events.
 
 | Offset | Bytes | Name | Access, bits and reset |
 | --- | --- | --- | --- |
-| 00–03 | 4 | IDENT | RO bytes `56 53 4e 01` (VSN, revision 1) |
+| 00–03 | 4 | IDENT | RO bytes `56 53 4e 03` (VSN, revision 3) |
 | 04 | 1 | CONTROL | RW bit 0 master enable, 1 background, 2 sprites, 3 show BG in left 8, 4 show sprites in left 8, 5 strict 8-sprite limit, 6 8x16 NES sprites, reset 20 |
 | 05 | 1 | MODE | RW 0 NES, 1 packed4, 2 planar4, 3 packed8, 4 packed16, 5 hires, values above 5 ignored |
 | 06 | 1 | STATUS | bits 0 memory fault, 1 sprite-zero hit, 2 sprite overflow: sticky W1C, bit 7 live vblank, RO |
-| 07 | 1 | FEATURES | RO 3f: bit 0 NES, bit 1 packed4, bit 2 planar4, bit 3 packed8, bit 4 packed16, bit 5 hires |
+| 07 | 1 | FEATURES | RO ff: bit 0 NES, bit 1 packed4, bit 2 planar4, bit 3 packed8, bit 4 packed16, bit 5 hires, bit 6 selectable hires BG tile size, bit 7 BG0 and background alpha |
 | 08 | 1 | IRQ_PENDING | RW W1C: bit 0 vblank, 1 raster, 2 DMA complete, 3 DMA fault. Write 1 clears a cause, write 0 no-op |
 | 09 | 1 | IRQ_ENABLE | RW mask 0f: same bits enable each cause. Vblank drives NMI, bits 1–3 drive IRQ |
 | 0a–0f | 6 | interrupt allocation | reserved |
@@ -60,7 +66,11 @@ atomic across scanline events.
 | 14 | 2 | SCROLL_X | RW unsigned pixel offset |
 | 16 | 2 | SCROLL_Y | RW unsigned pixel offset |
 | 18 | 1 | NES_COLOR | RW bit 0 grayscale, bits 1–3 RGB emphasis |
-| 19–1f | 7 | geometry allocation | reserved |
+| 19 | 1 | BG_TILE_SIZE | RW 0 16x16, 1 8x16, 2 8x8, reset 0. Used only in mode 5. Values above 2 ignored |
+| 1a | 1 | BG0_CONTROL | RW bit 0 enable, bit 1 planar depth (0 2bpp, 1 4bpp) in mode 2, reset 0 |
+| 1b | 1 | BG0_TILE_SIZE | RW mode 5 geometry: 0 16x16, 1 8x16, 2 8x8, reset 0. Values above 2 ignored |
+| 1c | 1 | BG_ALPHA | RW bits 0–1 BG0 opacity, bits 2–3 BG1 opacity: 0 transparent, 1 one-third, 2 two-thirds, 3 opaque. Reset 0f |
+| 1d–1f | 3 | geometry allocation | reserved |
 | 20 | 4 | MAP_BASE | RW linear address |
 | 24 | 4 | BG_TILE_BASE | RW linear address |
 | 28 | 2 | MAP_ROW_STRIDE | RW packed map bytes per tile row, reset 64, zero repeats first row |
@@ -68,7 +78,7 @@ atomic across scanline events.
 | 2b | 1 | MAP_HEIGHT | RW packed map tiles, reset 30, zero means 256 |
 | 2c | 2 | NES_PAGE_X_STRIDE | RW bytes to right nametable, reset 1024 |
 | 2e | 2 | NES_PAGE_Y_STRIDE | RW bytes to lower nametable, reset 2048 |
-| 30 | 4 | SPRITE_BASE | RW sprite table: NES 256-byte OAM in modes 0/2, extended 512-byte table in modes 1/3/4 |
+| 30 | 4 | SPRITE_BASE | RW sprite table: NES 256-byte OAM in modes 0/2, extended 512-byte table in modes 1/3/4/5 |
 | 34 | 4 | SPRITE_TILE_BASE | RW linear address |
 | 38 | 1 | NES_PATTERN | RW bit 0 BG pattern table, bit 1 8x8 sprite pattern table |
 | 39 | 1 | PLANAR | RW bit 0 BG depth, bit 1 sprite depth (0 2bpp, 1 4bpp), planar4 mode only |
@@ -76,7 +86,9 @@ atomic across scanline events.
 | 40 | 4 | PALETTE_BASE | RW linear address |
 | 44 | 1 | PALETTE_FORMAT | RO, derived: 0 NES indices in mode 0, 1 RGB444 in modes 1 and 2, 2 RGB555 in modes 3, 4 and 5 |
 | 45 | 1 | BACKDROP | RW packed palette index, NES always uses palette entry 0 |
-| 46–4f | 10 | palette allocation | reserved |
+| 46 | 4 | PALETTE_ALPHA_BASE | RW address of 256 one-byte background opacity entries |
+| 4a | 1 | PALETTE_ALPHA_CONTROL | RW bit 0 enable alpha table, reset 0 |
+| 4b–4f | 5 | palette allocation | reserved |
 | 50 | 2 | RASTER | RW scanline at which the raster IRQ cause asserts |
 | 52 | 2 | CURRENT_X | RO zero (scanline granularity) |
 | 54 | 2 | CURRENT_Y | RO next scanline |
@@ -89,7 +101,13 @@ atomic across scanline events.
 | 6d | 1 | DMA_STATUS | RO bit 0 busy, 1 complete, 2 fault, complete/fault sticky until the next start |
 | 6e | 1 | DMA_FILL | RW fill byte |
 | 6f | 1 | DMA allocation | reserved |
-| 70–7f | 16 | extended allocation | reserved |
+| 70 | 4 | BG0_MAP_BASE | RW linear address |
+| 74 | 4 | BG0_TILE_BASE | RW linear address |
+| 78 | 2 | BG0_MAP_ROW_STRIDE | RW bytes per tile row, reset 64, zero repeats first row |
+| 7a | 1 | BG0_MAP_WIDTH | RW map tiles, reset 32, zero means 256 |
+| 7b | 1 | BG0_MAP_HEIGHT | RW map tiles, reset 30, zero means 256 |
+| 7c | 2 | BG0_SCROLL_X | RW unsigned pixel offset |
+| 7e | 2 | BG0_SCROLL_Y | RW unsigned pixel offset |
 
 Interrupts are sticky, independently enabled, and recomputed as one physical
 level each. `IRQ_PENDING` (0x08) is W1C: writing a 1 acknowledges that cause
@@ -117,6 +135,56 @@ interrupt cause. A failed read or write records a memory fault, sets
 `DMA_STATUS` fault, raises the DMA fault cause, and stops the transfer at the
 failed address. `strict_memory` applies only to rendering.
 
+## Background layers and alpha
+
+The existing MAP, BG_TILE, SCROLL and map geometry registers configure BG1.
+CONTROL bit 1 enables BG1. BG0 uses its own registers and BG0_CONTROL bit 0.
+Both follow MODE, share the color palette, and use the same descriptor format.
+BG0 is always below BG1. Their map dimensions, strides, pattern addresses and
+scroll positions are independent. In mode 2 each layer chooses its own planar
+depth. In mode 5 each chooses its own tile size. Both hires rows use the same
+scanline register snapshot.
+
+BG_ALPHA packs two independent 2-bit opacities. Bits 0–1 control BG0 and bits
+2–3 control BG1. Values 0, 1, 2 and 3 expand to alpha 0, 85, 170 and 255,
+representing 0%, 33⅓%, 66⅔% and 100%. For example, 07 makes BG0 opaque and
+BG1 one-third opaque. The reset value 0f makes both opaque. Disabled layers and
+layers with opacity zero fetch no map or pattern data.
+
+Pixel value zero is transparent regardless of descriptor bank or alpha table.
+Without PALETTE_ALPHA_CONTROL bit 0, all other background pixels have alpha
+255. With it enabled, a nonzero pixel's resolved palette index selects one
+byte at PALETTE_ALPHA_BASE + index. Alpha 0 is transparent and 255 is opaque.
+Entries affect both backgrounds, including palette banks in modes 1 and 2.
+To use one RGB color at different opacities, assign it to multiple palette
+entries. Color palette encoding and tile data are unchanged.
+
+The 256 alpha bytes latch independently at the first visible scanline using
+an enabled background with nonzero layer opacity. They remain latched until
+the next frame or until PALETTE_ALPHA_BASE or MODE changes. Disabling and
+re-enabling the table in the same frame retains that latch. Changing the
+layer opacity or alpha-table enable takes effect at the next scanline.
+When the table is disabled or neither background needs it, there are no alpha
+memory fetches. Fetch faults follow the normal rendering fault policy.
+
+Effective background alpha is `(paletteAlpha * layerAlpha + 127) / 255`,
+using integer division. Each RGB channel blends as
+`(source * alpha + destination * (255 - alpha) + 127) / 255`.
+The composition order is backdrop, behind-background sprite, BG0, BG1,
+foreground sprite. The backdrop and sprites remain opaque. The output surface
+always has alpha 255. A behind-background sprite shows through translucent
+background pixels. Sprite selection still uses table order, so a lower-priority
+sprite cannot replace a selected sprite obscured by a background.
+
+Mode 2 sprite-zero hit tests nonzero effective alpha in BG1 only. BG0 never
+triggers that hit. All other sprite selection, clipping and overflow rules
+retain their existing behavior.
+
+Mode 0 ignores BG0, BG_ALPHA and the palette-alpha controls. These registers
+remain readable and writable, preserving their values for a later mode change.
+Mode 0 performs no BG0 or alpha-table fetches. Master disable still stops all
+rendering fetches in every mode.
+
 ## Shared formats and address examples
 
 All address expressions are evaluated without 32-bit wrapping. A result above
@@ -132,35 +200,58 @@ bank bits 12–15. With scrolled/wrapped pixel `(x,y)`, the descriptor address i
 `8*MAP_WIDTH` and `8*MAP_HEIGHT`. A tile is 32 bytes, row-major. Even X is the
 **high nibble**. Pixel address is `BG_TILE_BASE + tile*32 + (y%8)*4 + (x%8)/2`.
 Example: tile 3, local (5,2) reads `BG_TILE_BASE+106`, low nibble. Index zero
-selects BACKDROP, otherwise palette index is `bank*16+pixel`. Packed backgrounds
+is transparent, otherwise palette index is `bank*16+pixel`. Packed backgrounds
 ignore NES clipping and pattern-table controls. Their sprites use the extended
 table below.
 
 Packed8 (mode 3) uses the same descriptor map, wrap periods and scroll units as
 packed4, but stores one byte per pixel and 64 bytes per tile: pixel address is
 `BG_TILE_BASE + tile*64 + (y%8)*8 + (x%8)`. Example: tile 3, local (5,2) reads
-`BG_TILE_BASE+213`. Index zero selects BACKDROP. Any other pixel value is the
+`BG_TILE_BASE+213`. Index zero is transparent. Any other pixel value is the
 full 8-bit palette index, so descriptor bank bits are ignored.
 
 Packed16 (mode 4) uses 16x16-pixel background tiles. The 16-bit descriptor map is
 read as `MAP_BASE + (y/16)*MAP_ROW_STRIDE + (x/16)*2`, wrap periods are
 `16*MAP_WIDTH` and `16*MAP_HEIGHT`, and tiles are 256 bytes: pixel address is
 `BG_TILE_BASE + tile*256 + (y%16)*16 + (x%16)`. Example: tile 3, local (5,2)
-reads `BG_TILE_BASE+805`. Index zero selects BACKDROP. Otherwise the pixel value
+reads `BG_TILE_BASE+805`. Index zero is transparent. Otherwise the pixel value
 is the 8-bit palette index and descriptor bank bits are ignored.
 
-Hires (mode 5) uses the packed16 tile format, map, wrap periods, palette and
-extended sprites. It renders at 512x480. Scroll units match output pixels.
-With the default `MAP_WIDTH` and `MAP_HEIGHT`, a 32x30 map fills the frame.
-All 16 rows of each tile are sampled.
+Hires (mode 5) renders at 512x480 with 8bpp background tiles selected by
+BG_TILE_SIZE. Each tile is a contiguous row-major pattern. The descriptor
+format matches packed8: tile index bits 0–11, bank bits ignored. Pixel zero
+is transparent, otherwise the byte is the full palette index. The palette is
+RGB555. Scroll units match output pixels.
+
+| BG_TILE_SIZE | Tile dimensions | Bytes per tile | Map covering the frame | Minimum MAP_ROW_STRIDE |
+| --- | --- | --- | --- | --- |
+| 0 | 16x16 | 256 | 32x30 | 64 |
+| 1 | 8x16 | 128 | 64x30 | 128 |
+| 2 | 8x8 | 64 | 64x60 | 128 |
+
+With tile width `W` and height `H`, wrap periods are `W*MAP_WIDTH` and
+`H*MAP_HEIGHT`. Zero map dimensions still mean 256 tiles. For the wrapped
+pixel `(x,y)`, the descriptor address is
+`MAP_BASE + (y/H)*MAP_ROW_STRIDE + (x/W)*2`, and the pixel address is
+`BG_TILE_BASE + tile*(W*H) + (y%H)*W + (x%W)`.
+For example, 8x16 tile 3 at local (5,10) reads `BG_TILE_BASE+469`.
+BG_TILE_SIZE does not change map dimensions or stride automatically. Its
+reset value uses the default 32x30 map. Larger maps and padded strides support
+scrolling as in other packed modes. Zero stride repeats the first map row.
+
+Geometry changes take effect at the next scanline event, using the same
+register snapshot for both output rows of that event. All pattern rows are
+sampled. Extended sprites keep their independent record size selector and
+pattern layout, including the paired 8x8 patterns used by 8x16 sprites.
+BG_TILE_SIZE has no rendering effect in modes 0–4.
 
 Planar4 (mode 2) uses the same 16-bit descriptor map, wrap periods and scroll
 units as packed4. Tiles are decoded as bitplanes instead of nibbles: BG tile
 address is `BG_TILE_BASE + tile*32 + plane*8 + (y%8)` for 4bpp (planes 0–3) or
 `BG_TILE_BASE + tile*16 + plane*8 + (y%8)` for 2bpp (planes 0–1). Plane 0 is
 the least-significant bit, bit 7 is leftmost:
-`pixel = plane0 | plane1<<1 | plane2<<2 | plane3<<3`. Pixel zero selects
-BACKDROP, otherwise palette index is `bank*16+pixel` (4bpp) or `bank*4+pixel`
+`pixel = plane0 | plane1<<1 | plane2<<2 | plane3<<3`. Pixel zero is
+transparent, otherwise palette index is `bank*16+pixel` (4bpp) or `bank*4+pixel`
 (2bpp). PLANAR bit 0 selects the BG depth. This is the native linear form of the
 VT03 four-plane fetch: the hardware's second `0x2000` plane bank is folded into
 `plane*8` offsets within a single 32-byte tile, and the bank-derived tile
@@ -173,7 +264,7 @@ frame at the first enabled visible line that uses it, including lines with both
 layers disabled, and held until the next frame or until MODE, PALETTE_BASE or
 NES_COLOR changes mid-frame.
 
-RGB555 is the mode 3/4 palette: 256 little-endian 16-bit entries at
+RGB555 is the mode 3/4/5 palette: 256 little-endian 16-bit entries at
 `PALETTE_BASE+index*2` with blue bits 0–4, green 5–9, red 10–14 and bit 15
 ignored. Each 5-bit channel expands with `(v<<3)|(v>>2)`. Example `1f 00` is
 (255,0,0,255). Latching rules match RGB444, and `PALETTE_FORMAT` reports 2.
@@ -245,7 +336,7 @@ when its behind-BG flag hides it. Size 1 pairs two consecutive 8x8 tiles via
 `SPRITE_TILE_BASE + tile*64 + (y%8)*8 + (x%8)` for 8bpp, with the 16x16 forms
 `tile*128 + (y%16)*8 + (x%16)/2` and `tile*256 + (y%16)*16 + (x%16)`. Mode 1
 sprites are 4bpp, and the record palette is a 16-entry bank (`palette*16+pixel`).
-Modes 3/4 sprites are 8bpp and the pixel value is the full palette index, so the
+Modes 3/4/5 sprites are 8bpp and the pixel value is the full palette index, so the
 record palette is ignored. Pixel zero is transparent. Extended sprites have no
 sprite-zero hit, no 8-sprite limit, no overflow flag and no left-edge masking.
 Those are NES/planar4 rules. The 512 bytes are latched once per frame at the
@@ -288,11 +379,12 @@ Reset (warm or cold) resets registers, counters, faults, both framebuffers and
 scheduling remainder, preserving shared RAM. Destroy cancels the event and
 unmaps MMIO. Video providers use host owner teardown.
 
-The standalone core has validated fixed-endian snapshots (`VSN1`, version 5).
-Version 5 stores the published frame timing with the two framebuffers. Snapshots
+The standalone core has validated fixed-endian snapshots (`VSN1`, version 7).
+Version 7 includes BG0 and alpha registers alongside BG_TILE_SIZE and the
+published frame timing with the two framebuffers. Older snapshot versions are rejected. Snapshots
 round-trip mid-DMA transfers and pending/enabled causes
-at every raster phase. A load re-latches palette/OAM from shared memory at the
-next frame. Card ABI save/load is deliberately unavailable until phase 8: the
+at every raster phase. A load re-latches color/alpha palettes and OAM from shared memory at their
+next visible use. Card ABI save/load is deliberately unavailable until phase 8: the
 current host API supplies no simulated scheduler clock or post-restore hook,
 and `host.time_ns` may be fixed or wall-clock time. An exact remaining-event
 deadline cannot be restored portably through that API. No wall-clock reads are
@@ -306,16 +398,18 @@ are bundled. `PLAN.md` is an older roadmap. This README describes the current
 implementation.
 
 - `vsn_memory.hpp`: storage transport interface, independent of the host ABI.
+- `vsn_registers.hpp`: shared register offsets for the core and renderer.
 - `vsn_layout.hpp`: pure descriptor/address/pixel decoding for tile formats.
 - `vsn_renderer.hpp`: replaceable video backend with reset/frame/scanline hooks.
 - `vsn_renderer.cpp`: line-local tile/palette/OAM renderer, no scheduler or host types.
 - `vsn_core.*`: register device, checked memory gateway, raster and RGBA storage.
 - `card.cpp`: configuration, host memory transport, MMIO, event and video registration.
 
-The renderer caches palette and sprite data between scanlines. `reset()` clears
+The renderer caches color/alpha palettes and sprite data between scanlines. `reset()` clears
 those caches. Snapshots therefore store no renderer state. A load reads the
-data from shared memory on the next frame.
+data from shared memory on the next visible use.
 
 ## Build
 
 Build target `plugin_vsn`. Output `video_vsn`.
+

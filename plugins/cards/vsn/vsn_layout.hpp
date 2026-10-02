@@ -3,27 +3,46 @@
 #include <cstdint>
 
 namespace vsn::layout {
+struct PackedGeometry {
+    unsigned width, height;
+    constexpr unsigned bytes() const { return width * height; }
+};
+constexpr PackedGeometry hires_geometry(unsigned selector) {
+    if (selector == 1) return {8, 16};
+    if (selector == 2) return {8, 8};
+    return {16, 16};
+}
 // Widen addresses before arithmetic. Core rejects values above UINT32_MAX.
+constexpr uint64_t packed_map(uint32_t base, uint16_t stride, unsigned x, unsigned y,
+                              PackedGeometry geometry) {
+    return uint64_t(base) + uint64_t(y / geometry.height) * stride +
+           uint64_t(x / geometry.width) * 2;
+}
 constexpr uint64_t packed_map(uint32_t base, uint16_t stride, unsigned x, unsigned y) {
-    return uint64_t(base) + uint64_t(y / 8) * stride + (x / 8) * 2;
+    return packed_map(base, stride, x, y, {8, 8});
 }
 // 16x16-wide map rows: one descriptor per 16-pixel tile column.
 constexpr uint64_t packed_map16(uint32_t base, uint16_t stride, unsigned x, unsigned y) {
-    return uint64_t(base) + uint64_t(y / 16) * stride + (x / 16) * 2;
+    return packed_map(base, stride, x, y, {16, 16});
 }
 constexpr uint64_t packed4(uint32_t base, unsigned tile, unsigned x, unsigned y) {
     return uint64_t(base) + uint64_t(tile) * 32 + y * 4 + x / 2;
 }
 // Packed 8bpp: one byte per pixel, 64 bytes per 8x8 tile.
+constexpr uint64_t packed8(uint32_t base, unsigned tile, unsigned x, unsigned y,
+                           PackedGeometry geometry) {
+    return uint64_t(base) + uint64_t(tile) * geometry.bytes() +
+           uint64_t(y) * geometry.width + x;
+}
 constexpr uint64_t packed8(uint32_t base, unsigned tile, unsigned x, unsigned y) {
-    return uint64_t(base) + uint64_t(tile) * 64 + y * 8 + x;
+    return packed8(base, tile, x, y, {8, 8});
 }
 // 16x16 packed tiles: 128 bytes at 4bpp, 256 bytes at 8bpp. Even X is high nibble.
 constexpr uint64_t packed4_16x16(uint32_t base, unsigned tile, unsigned x, unsigned y) {
     return uint64_t(base) + uint64_t(tile) * 128 + y * 8 + x / 2;
 }
 constexpr uint64_t packed8_16x16(uint32_t base, unsigned tile, unsigned x, unsigned y) {
-    return uint64_t(base) + uint64_t(tile) * 256 + y * 16 + x;
+    return packed8(base, tile, x, y, {16, 16});
 }
 constexpr uint8_t nibble(uint8_t byte, unsigned x) {
     return (byte >> ((x & 1) ? 0 : 4)) & 15;

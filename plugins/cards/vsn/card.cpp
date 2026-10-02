@@ -323,7 +323,7 @@ SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),"Video","SR Visual Synthesizer",
     "Native shared-memory tile and NES graphics renderer",0x80,128,0,0,0,SRH_CARD_REQUIRES_IO_SPACE,
     R"({"io_space":"cpu0.io","memory_space":"cpu0.mem","region":"NTSC","nmi_signal":"NMI","irq_signal":"IRQ","strict_memory":false})",
-    "io_space",nullptr,nullptr,0};
+    "io_space",nullptr,nullptr,0,"memory_space","Graphics memory"};
 const SrhPlugin api{SRH_INIT(SrhPlugin),"vsn",create,destroy,reset,property_count,property_info,
     property_get,property_set,nullptr,nullptr,&descriptor,nullptr,nullptr};
 } // namespace

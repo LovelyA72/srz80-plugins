@@ -18,6 +18,10 @@ void Core::reset() {
     registers_[0x28]=64;
     registers_[0x2a]=32; registers_[0x2b]=30;
     registers_[0x2d]=4; registers_[0x2f]=8;
+    registers_[reg::bg_alpha]=0x0f;
+    registers_[reg::bg0_row_stride]=64;
+    registers_[reg::bg0_map_width]=32;
+    registers_[reg::bg0_map_height]=30;
     line_=lines()-1; frame_=faults_=fault_address_=0;
     published_frame_=published_line_=0;
     vblank_=fault_write_=rendering_=false;
@@ -36,9 +40,9 @@ uint32_t Core::value(unsigned offset, unsigned bytes) const {
 }
 uint8_t Core::read(unsigned offset) const {
     if (offset>=128) return 0;
-    if (offset<4) return std::array<uint8_t,4>{'V','S','N',1}[offset];
+    if (offset<4) return std::array<uint8_t,4>{'V','S','N',3}[offset];
     if (offset==6) return registers_[6] | (vblank_ ? 0x80 : 0);
-    if (offset==7) return 0x3f;
+    if (offset==7) return 0xff;
     if (offset==0x10 || offset==0x11) return uint8_t(logical_width() >> ((offset-0x10)*8));
     if (offset==0x12 || offset==0x13) return uint8_t(logical_height() >> ((offset-0x12)*8));
     if (offset==0x44) return registers_[5]==0 ? 0 : (registers_[5]>=3 ? 2 : 1);
@@ -54,6 +58,12 @@ void Core::write(unsigned offset, uint8_t value) {
     else if (offset==8) registers_[offset] &= ~(value&0x0f);   // W1C acknowledge
     else if (offset==9) registers_[offset]=value&0x0f;          // cause enable mask
     else if (offset==0x18) registers_[offset]=value&15;
+    else if (offset==reg::bg_tile_size || offset==reg::bg0_tile_size) {
+        if (value<=2) registers_[offset]=value;
+    }
+    else if (offset==reg::bg0_control) registers_[offset]=value&3;
+    else if (offset==reg::bg_alpha) registers_[offset]=value&15;
+    else if (offset==reg::palette_alpha_control) registers_[offset]=value&1;
     else if (offset==0x38) registers_[offset]=value&3;
     else if (offset==0x39) registers_[offset]=value&3;
     else if (offset==0x6c) { registers_[offset]=value&0x0e; if (value&1) start_dma(); }
@@ -63,6 +73,8 @@ void Core::write(unsigned offset, uint8_t value) {
     }
     else if ((offset>=0x14 && offset<=0x17) || (offset>=0x20 && offset<=0x37) ||
              (offset>=0x40 && offset<=0x43) || offset==0x45 ||
+             (offset>=reg::palette_alpha && offset<reg::palette_alpha+4) ||
+             (offset>=reg::bg0_map && offset<128) ||
              offset==0x50 || offset==0x51 || offset==0x6e) registers_[offset]=value;
 }
 void Core::fault(uint64_t address, bool writing) {
@@ -225,7 +237,7 @@ std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;
     out.reserve(176+2*frame_bytes);
     state::append(out,0x314e5356,4); // VSN1
-    state::append(out,5,2);
+    state::append(out,7,2);
     state::append(out,unsigned(region_),1); state::append(out,strict_,1);
     out.insert(out.end(),registers_.begin(),registers_.end());
     state::append(out,line_,2); state::append(out,vblank_,1); state::append(out,fault_write_,1);
@@ -238,7 +250,7 @@ std::vector<uint8_t> Core::save() const {
 bool Core::load(std::span<const uint8_t> data) {
     constexpr size_t header=176;
     if (data.size()!=header+2*frame_bytes || state::get(data,0,4)!=0x314e5356 ||
-        state::get(data,4,2)!=5 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
+        state::get(data,4,2)!=7 || data[6]!=unsigned(region_) || data[7]!=strict_ ||
         state::get(data,136,2)>=lines() || data[138]>1 || data[139]>1 ||
         state::get(data,164,8)>state::get(data,140,8) ||
         (state::get(data,172,4)!=0 && state::get(data,172,4)!=height)) return false;
