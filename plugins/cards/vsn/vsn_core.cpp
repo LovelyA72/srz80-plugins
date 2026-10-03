@@ -231,7 +231,7 @@ void Core::tick() {
         published_frame_=frame_;
         published_line_=line_;
     }
-    if (line_==lines()) { line_=0; ++frame_; renderer_->begin_frame(frame_); }
+    if (line_==lines()) { line_=0; ++frame_; }
 }
 std::vector<uint8_t> Core::save() const {
     std::vector<uint8_t> out;

@@ -113,7 +113,7 @@ public:
     ~Card() {
         if (event_) host_.cancel(host_.context,event_);
         if (mapping_) host_.unmap(host_.context,mapping_);
-        if (signals_ && signals_->release) {
+        if (signals_) {
             if (nmi_signal_) signals_->release(signals_->context,owner_,nmi_signal_);
             if (irq_signal_) signals_->release(signals_->context,owner_,irq_signal_);
         }
@@ -133,7 +133,7 @@ public:
         if (result!=SRH_OK) return result;
         result=video.set_video_timing(video.context,surface_,timing,this);
         if (result!=SRH_OK) return result;
-        return arm(clock_.next_delay(),event_);
+        return host_.schedule(host_.context,owner_,clock_.next_delay(),tick,this,&event_);
     }
     SrhStatus reset() {
         if (event_) {
@@ -143,7 +143,7 @@ public:
         }
         core_.reset(); clock_.remainder=0;
         update_signals();
-        return arm(clock_.next_delay(),event_);
+        return host_.schedule(host_.context,owner_,clock_.next_delay(),tick,this,&event_);
     }
     static SrhStatus SRH_CALL read(void *context, uint64_t address, uint8_t *out) {
         auto &card=*static_cast<Card*>(context);
@@ -183,32 +183,24 @@ private:
     // A failed drive must not stop the raster.
     void drive_signal(SrhHandle signal, bool level, bool &cached) {
         if (!signal || level==cached) return;
-        if (level) {
-            if (host_.signal_drive)
-                host_.signal_drive(host_.context,owner_,signal,1000,0);
-        } else {
-            if (signals_ && signals_->release)
-                signals_->release(signals_->context,owner_,signal);
-            else if (host_.signal_drive)
-                host_.signal_drive(host_.context,owner_,signal,0,0);
-        }
+        if (level)
+            host_.signal_drive(host_.context,owner_,signal,1000,0);
+        else
+            signals_->release(signals_->context,owner_,signal);
         cached=level;
     }
     void update_signals() {
         drive_signal(nmi_signal_,core_.nmi_asserted(),nmi_level_);
         drive_signal(irq_signal_,core_.irq_asserted(),irq_level_);
     }
-    SrhStatus arm(uint64_t delay, SrhHandle &event) {
-        return host_.schedule(host_.context,owner_,delay,tick,this,&event);
-    }
-
     static SrhStatus SRH_CALL tick(void *context) {
         return srz80::sdk::guard([&] {
             auto &card=*static_cast<Card*>(context);
             card.event_=0;
             card.core_.tick();
             card.update_signals();
-            return card.arm(card.clock_.next_delay(),card.event_);
+            return card.host_.schedule(card.host_.context,card.owner_,card.clock_.next_delay(),
+                                       tick,&card,&card.event_);
         });
     }
     static SrhStatus SRH_CALL pixels(void *context, uint64_t offset, uint8_t *out,

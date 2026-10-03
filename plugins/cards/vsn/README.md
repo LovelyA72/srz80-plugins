@@ -343,11 +343,6 @@ Those are NES/planar4 rules. The 512 bytes are latched once per frame at the
 first visible line with sprites enabled and held until the next frame or until
 MODE or SPRITE_BASE changes mid-frame.
 
-Future optional 32-bit background tile descriptors allocate tile bits 0–19,
-palette 20–23, flip X 24, flip Y 25, priority 26, reserved 27–31. Later modes
-must retain the extended sprite layout. Unproven VT hardware forms require
-separate mode IDs.
-
 ## Raster, surface and lifecycle
 
 One scheduled event processes one line. Reset starts at pre-render (last line),
@@ -394,13 +389,12 @@ read-only.
 ## Implementation and license
 
 VSN is MIT licensed. See `LICENSE`. No MAME code, palettes or reference files
-are bundled. `PLAN.md` is an older roadmap. This README describes the current
-implementation.
+are bundled.
 
 - `vsn_memory.hpp`: storage transport interface, independent of the host ABI.
 - `vsn_registers.hpp`: shared register offsets for the core and renderer.
 - `vsn_layout.hpp`: pure descriptor/address/pixel decoding for tile formats.
-- `vsn_renderer.hpp`: replaceable video backend with reset/frame/scanline hooks.
+- `vsn_renderer.hpp`: replaceable video backend with reset and scanline hooks.
 - `vsn_renderer.cpp`: line-local tile/palette/OAM renderer, no scheduler or host types.
 - `vsn_core.*`: register device, checked memory gateway, raster and RGBA storage.
 - `card.cpp`: configuration, host memory transport, MMIO, event and video registration.

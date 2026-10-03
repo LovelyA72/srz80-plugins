@@ -37,7 +37,6 @@ public:
     static constexpr size_t frame_bytes=surface_width*surface_height*4;
     // DMA transfers at most 16 bytes per scanline event.
     static constexpr unsigned dma_bytes_per_line=16;
-    using Color = std::array<uint8_t, 4>;
     explicit Core(Memory &memory, Region region=Region::ntsc, bool strict=false,
                   std::unique_ptr<Renderer> renderer = make_tile_renderer());
     void reset();

@@ -25,8 +25,6 @@ class Renderer {
 public:
     virtual ~Renderer() = default;
     virtual void reset() {}
-    // Prepare frame state here. Read guest memory in render_scanline().
-    virtual void begin_frame(uint64_t) {}
     // rgba has width*4 bytes in RGBA order. All arguments are borrowed.
     virtual VideoEffects render_scanline(const VideoLine &, Memory &,
                                         std::span<uint8_t> rgba) = 0;

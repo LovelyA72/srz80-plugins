@@ -18,13 +18,6 @@ constexpr uint64_t packed_map(uint32_t base, uint16_t stride, unsigned x, unsign
     return uint64_t(base) + uint64_t(y / geometry.height) * stride +
            uint64_t(x / geometry.width) * 2;
 }
-constexpr uint64_t packed_map(uint32_t base, uint16_t stride, unsigned x, unsigned y) {
-    return packed_map(base, stride, x, y, {8, 8});
-}
-// 16x16-wide map rows: one descriptor per 16-pixel tile column.
-constexpr uint64_t packed_map16(uint32_t base, uint16_t stride, unsigned x, unsigned y) {
-    return packed_map(base, stride, x, y, {16, 16});
-}
 constexpr uint64_t packed4(uint32_t base, unsigned tile, unsigned x, unsigned y) {
     return uint64_t(base) + uint64_t(tile) * 32 + y * 4 + x / 2;
 }
