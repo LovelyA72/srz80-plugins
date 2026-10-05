@@ -8,6 +8,10 @@ register interface. Modes 1–5 have BG0 below BG1, with independent scrolling,
 2-bit layer opacity and optional palette alpha. Mode 0 retains one NES
 background. Unimplemented registers read zero and ignore writes.
 
+[VSN Inspector](../../tools/vsn_inspector/README.md) provides tile, sprite and
+layer viewers in one tool library. The card registers an optional read-only
+inspection provider when the host supports `host.providers.v1`.
+
 ## Installation and configuration
 
 Plugin ID `vsn`, category Video, display name SR Visual Synthesizer. Default
@@ -15,6 +19,7 @@ mapping: `cpu0.io`, base `0x80`, exactly 128 bytes. No rack clock subscription.
 The descriptor declares separate I/O and Graphics memory selectors. The host
 writes their selected names to `io_space` and `memory_space` and keeps these
 keys out of the other-settings JSON editor. Both may select the same space.
+The Add card preset selects `cpu0.memory` for graphics in a new host project.
 Configuration is a JSON object. Unknown keys and wrong types fail creation.
 
 | Key | Default | Accepted value |
@@ -406,4 +411,3 @@ data from shared memory on the next visible use.
 ## Build
 
 Build target `plugin_vsn`. Output `video_vsn`.
-

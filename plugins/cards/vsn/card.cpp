@@ -2,9 +2,11 @@
 // SRZ80 transport and lifecycle adapter.
 #include <boundary.hpp>
 #include <srz80/signals.h>
+#include <srz80/providers.h>
 #include <nlohmann/json.hpp>
 #include "vsn_core.hpp"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -109,7 +111,8 @@ public:
         : host_(host),owner_(owner),base_(config.base),
           memory_(host,owner,memory,config.space,config.base),
           core_(memory_,settings.region,settings.strict),
-          clock_(settings.region,settings.clock) {}
+          clock_(settings.region,settings.clock),
+          inspection_space_(memory),inspection_io_(config.space),inspection_region_(settings.region) {}
     ~Card() {
         if (event_) host_.cancel(host_.context,event_);
         if (mapping_) host_.unmap(host_.context,mapping_);
@@ -123,6 +126,17 @@ public:
         signals_=signals; nmi_signal_=nmi; irq_signal_=irq;
     }
     void set_read_word(SrhHostReadWord callback) { memory_.set_read_word(callback); }
+    SrhStatus register_inspector() {
+        const void *extension=nullptr;
+        if (host_.query(host_.context,"host.providers.v1",&extension)!=SRH_OK || !extension)
+            return SRH_OK;
+        const auto *providers=static_cast<const SrhHostProvidersV1*>(extension);
+        if (!srz80::sdk::valid(providers) || !providers->register_provider) return SRH_OK;
+        SrhDataProviderV1 provider{SRH_INIT(SrhDataProviderV1),this,inspection_snapshot,inspection_command,{},{},0};
+        std::strcpy(provider.name,"VSN");
+        std::strcpy(provider.protocol,"srz80.vsn.inspector.v1");
+        return providers->register_provider(providers->context,owner_,&provider);
+    }
     SrhStatus start(const SrhConfig &config, const SrhHostVideoV1 &video) {
         SrhMapping mapping{SRH_INIT(SrhMapping),config.space,base_,base_+127,config.priority,
                            this,read,write,read,nullptr};
@@ -179,6 +193,26 @@ public:
         return SRH_OK;
     }
 private:
+    static SrhStatus SRH_CALL inspection_command(void *, uint32_t, uint64_t, const char *, uint64_t) {
+        return SRH_UNAVAILABLE;
+    }
+    static SrhStatus SRH_CALL inspection_snapshot(void *context, char *out, uint64_t *size) {
+        return srz80::sdk::guard([&]() -> SrhStatus {
+            if (!context || !size) return SRH_INVALID;
+            const auto &card=*static_cast<Card*>(context);
+            std::array<uint8_t,128> registers{};
+            for (unsigned i=0; i<registers.size(); ++i) registers[i]=card.core_.read(i);
+            const auto text=nlohmann::json{{"registers",registers},{"memory_space",card.inspection_space_},
+                {"io_space",card.inspection_io_},{"io_base",card.base_},
+                {"pal",card.inspection_region_==Region::pal}}.dump();
+            const uint64_t required=text.size()+1;
+            if (!out) { *size=required; return SRH_OK; }
+            if (*size<required) { *size=required; return SRH_INVALID; }
+            std::memcpy(out,text.c_str(),required);
+            *size=required;
+            return SRH_OK;
+        });
+    }
     // Release inactive lines so other devices can drive shared signals.
     // A failed drive must not stop the raster.
     void drive_signal(SrhHandle signal, bool level, bool &cached) {
@@ -227,6 +261,8 @@ private:
     HostMemory memory_;
     Core core_;
     RasterClock clock_;
+    SrhHandle inspection_space_,inspection_io_;
+    Region inspection_region_;
 };
 SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhConfig *config, void **out) {
     if (out) *out=nullptr;
@@ -299,6 +335,8 @@ SrhStatus SRH_CALL create(const ShouryoHost *host, SrhHandle owner, const SrhCon
         card->set_read_word(read_word);
         const auto status=card->start(*config,*video);
         if (status!=SRH_OK) { diagnostic(config,"VSN could not map MMIO, register video or schedule raster"); return status; }
+        const auto inspection_status=card->register_inspector();
+        if (inspection_status!=SRH_OK) { diagnostic(config,"VSN could not register its inspector"); return inspection_status; }
         *out=card.release(); return SRH_OK;
     } catch (const std::exception &error) {
         diagnostic(config,error.what()); return SRH_INVALID;
@@ -314,7 +352,7 @@ SrhStatus SRH_CALL property_get(void *context, uint32_t index, SrhValue *out) { 
 SrhStatus SRH_CALL property_set(void *, uint32_t, const SrhValue *) { return SRH_INVALID; }
 const SrhCardDescriptor descriptor{SRH_INIT(SrhCardDescriptor),"Video","SR Visual Synthesizer",
     "Native shared-memory tile and NES graphics renderer",0x80,128,0,0,0,SRH_CARD_REQUIRES_IO_SPACE,
-    R"({"io_space":"cpu0.io","memory_space":"cpu0.mem","region":"NTSC","nmi_signal":"NMI","irq_signal":"IRQ","strict_memory":false})",
+    R"({"io_space":"cpu0.io","memory_space":"cpu0.memory","region":"NTSC","nmi_signal":"NMI","irq_signal":"IRQ","strict_memory":false})",
     "io_space",nullptr,nullptr,0,"memory_space","Graphics memory"};
 const SrhPlugin api{SRH_INIT(SrhPlugin),"vsn",create,destroy,reset,property_count,property_info,
     property_get,property_set,nullptr,nullptr,&descriptor,nullptr,nullptr};

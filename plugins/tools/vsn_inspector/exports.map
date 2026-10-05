@@ -1,0 +1,4 @@
+{
+  global: srz80_tool_init;
+  local: *;
+};
