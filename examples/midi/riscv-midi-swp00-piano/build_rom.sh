@@ -14,7 +14,7 @@ temp_dir="$(mktemp -d piano.XXXXXX)"
 trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
 # The boot animation paces itself from the cycle CSR, so both targets declare
 # Zicsr explicitly; the bare ISA string does not enable the CSR opcodes.
-# Keep code and constants below the Work RAM window at 0x4000.
+# Keep code and constants below the Work RAM window at 0x8000
 for target in rv32i:rv32i_zicsr rv32imf:rv32imf_zicsr; do
     name="${target%%:*}"
     march="${target##*:}"

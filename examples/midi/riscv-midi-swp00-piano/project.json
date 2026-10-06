@@ -1,10 +1,10 @@
 {
   "audio": {
-    "gain_db": 6.3
+    "gain_db": 7.9
   },
   "cards": [
     {
-      "base": "0x4000",
+      "base": "0x8000",
       "name": "Work RAM",
       "plugin": "ram",
       "priority": 0,
@@ -118,14 +118,14 @@
         "name": "MU50 SWP00 Piano",
         "ordinal": 0,
         "pan": 0,
-        "volume": 150
+        "volume": 100
       }
     ]
   },
   "name": "riscv-midi-swp00-piano",
   "rack_info": {
     "author": "LovelyA72",
-    "notes": "MU50 ROM-based GM1 piano; see README for synthesis limits.",
+    "notes": "MU50 ROM-based GM1 piano\n32 voice limit, have fun!",
     "thumbnail": "",
     "version": "1.0"
   },
@@ -142,7 +142,8 @@
   "tool_state": {
     "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
     "midi": "{\"endpoint\":\"swp00-piano.midi\",\"path\":\"\",\"schema\":1}",
-    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}"
+    "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
+    "z80_assembler": "{\"schema\":1,\"sources\":{}}"
   },
   "version": 2
 }

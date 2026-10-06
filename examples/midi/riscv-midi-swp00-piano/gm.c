@@ -1,4 +1,5 @@
 #include "gm.h"
+#include "gm_compat.h"
 
 /* MU50 v1.05 table locations in CPU byte order. Layout documented by
  * Theo Niessink's MUTable (mu50.cpp); see README for provenance. */
@@ -24,12 +25,32 @@ static u16 be16(u32 address) {
 }
 /* MU50 bank lists translate XG's sparse bank numbers to the packed ROM
  * program banks.  SFX voices use bank MSB 64; normal voices use LSB. */
-static u8 program_bank(const GmChannel *c) {
+static u8 program_bank(const Gm *s, const GmChannel *c) {
+    if (!s->xg_mode) return gm_rom(BANK_LISTS + 128u + compatible_bank(c));
     if (c->bank_msb == 64) return gm_rom(BANK_LISTS + 256u + c->bank_msb);
     return gm_rom(BANK_LISTS + 128u + c->bank_lsb);
 }
-static u32 instrument_address(const GmChannel *c) {
-    u32 entry = PROGRAMS + (u32)program_bank(c) * 256u + (u32)c->program * 2u;
+static u32 instrument_address(const Gm *s, const GmChannel *c) {
+    u8 program = c->program, bank = program_bank(s, c);
+    // GM2 and GS sound effects have equivalents in the MU50 SFX bank
+    if (!s->xg_mode && program >= 120) {
+        static const u8 effects[8][10] = {
+            {255,0,3,255,255,255,255,255,255,255},
+            {255,16,255,255,255,255,255,255,255,255},
+            {255,32,33,34,35,36,255,255,255,255},
+            {255,48,49,50,255,255,255,255,255,255},
+            {255,70,65,66,67,69,255,255,255,255},
+            {255,80,81,82,83,84,85,86,87,88},
+            {255,96,97,98,99,100,255,255,255,255},
+            {255,112,113,114,255,255,255,255,255,255}
+        };
+        u8 variation = c->bank_msb == 121 ? c->bank_lsb : c->bank_msb;
+        if (variation < 10 && effects[program - 120][variation] != 255) {
+            program = effects[program - 120][variation];
+            bank = gm_rom(BANK_LISTS + 320u);
+        }
+    }
+    u32 entry = PROGRAMS + (u32)bank * 256u + (u32)program * 2u;
     return INSTRUMENTS + (u32)be16(entry) * 2u;
 }
 static u32 drum_map(const GmChannel *c) {
@@ -43,7 +64,7 @@ void gm_voice_name(const Gm *s, u8 channel, char name[9]) {
         const char *text = c->bank_msb == 126 ? "SFX Kit " : "Drum Kit";
         for (i = 0; i < 8; ++i) name[i] = text[i];
     } else {
-        u32 instrument = instrument_address(c);
+        u32 instrument = instrument_address(s, c);
         for (i = 0; i < 8; ++i) name[i] = (char)gm_rom(instrument + 2u + i);
     }
     name[8] = 0;
@@ -124,11 +145,12 @@ static void all_sound_off(Gm *s, u8 channel) {
 static void stop(Gm *s) {
     u8 i;
     for (i = 0; i < GM_VOICES; ++i) silence(s, i);
-    for (i = 0; i < 16; ++i) s->channels[i].sustain = 0;
+    for (i = 0; i < 16; ++i) s->channels[i].sustain = s->channels[i].sostenuto = 0;
     s->transport = 0;
 }
 static void controllers(GmChannel *c) {
     c->expression = 127; c->modulation = c->pressure = c->sustain = 0;
+    c->sostenuto = c->soft = 0;
     c->reverb = 40; c->chorus = 0;
     c->bend = 8192; c->rpn_msb = c->rpn_lsb = 127;
 }
@@ -225,6 +247,8 @@ static void reset(Gm *s, u8 xg_mode) {
     s->channels[9].bank_msb = 127; s->channels[9].drum = 1;
     s->age = 0; s->running = s->have_first = s->sysex_length = 0;
     s->enabled = 1; s->master = 127; s->poll_voice = 0; s->xg_mode = xg_mode;
+    s->master_fine = 8192; s->master_coarse = 64;
+    s->user_rows[0] = s->user_rows[1] = 0;
     /* MEG dry output gains: 204 / 128 followed by the core's /4 output
      * scaling gives 204 / 512, approximately -8 dB on both channels. */
     gm_global(0x202, 0); gm_global(0x203, 204);
@@ -239,7 +263,9 @@ static int channel_pitch(const GmChannel *c) {
 }
 static void pitch(Gm *s, u8 i) {
     GmVoice *v = &s->voices[i];
-    int cents = clamp(v->pitch_cents + channel_pitch(&s->channels[v->channel]), -9600, 9599);
+    int cents = clamp(v->pitch_cents + channel_pitch(&s->channels[v->channel]) +
+                      scale((int)s->master_fine - 8192, 100, 8192) +
+                      ((int)s->master_coarse - 64) * 100, -9600, 9599);
     int octave = 1;
     u16 increment;
     while (cents >= 1200) { cents -= 1200; ++octave; }
@@ -254,7 +280,8 @@ static void pitch(Gm *s, u8 i) {
 static void level(Gm *s, u8 i) {
     GmVoice *v = &s->voices[i];
     GmChannel *c = &s->channels[v->channel];
-    int amount = v->attenuation + 2 * (attenuation(c->volume) + attenuation(c->expression) + attenuation(s->master));
+    int amount = v->attenuation + (c->soft ? 16 : 0) +
+                 2 * (attenuation(c->volume) + attenuation(c->expression) + attenuation(s->master));
     int pan = clamp((int)c->pan + (int)v->pan - 64, 0, 127);
     u8 left = pan <= 64 ? 0 : (u8)clamp(scale(pan - 64, 15, 63), 0, 15);
     u8 right = pan >= 64 ? 0 : (u8)clamp(scale(64 - pan, 15, 64), 0, 15);
@@ -282,13 +309,16 @@ static void update(Gm *s, u8 channel, u8 what) {
 static void pedal_up(Gm *s, u8 channel) {
     u8 i;
     for (i = 0; i < GM_VOICES; ++i)
-        if (s->voices[i].active && !s->voices[i].held && s->voices[i].channel == channel) release(s, i);
+        if (s->voices[i].active && !s->voices[i].held && s->voices[i].channel == channel &&
+            !s->channels[channel].sustain &&
+            !(s->channels[channel].sostenuto && s->voices[i].latched)) release(s, i);
 }
 static void notes_off(Gm *s, u8 channel) {
     u8 i;
     for (i = 0; i < GM_VOICES; ++i) if (s->voices[i].note != 255 && s->voices[i].channel == channel) {
         s->voices[i].held = 0;
-        if (!s->channels[channel].sustain && s->voices[i].active) release(s, i);
+        if (!s->channels[channel].sustain &&
+            !(s->channels[channel].sostenuto && s->voices[i].latched) && s->voices[i].active) release(s, i);
     }
 }
 static void note_off(Gm *s, u8 channel, u8 note) {
@@ -310,7 +340,8 @@ static void note_off(Gm *s, u8 channel, u8 note) {
         u32 age = s->voices[oldest].age;
         for (i = 0; i < GM_VOICES; ++i) if (s->voices[i].active && s->voices[i].age == age) {
             s->voices[i].held = 0;
-            if (!s->channels[channel].sustain) release(s, i);
+            if (!s->channels[channel].sustain &&
+                !(s->channels[channel].sostenuto && s->voices[i].latched)) release(s, i);
         }
     }
 }
@@ -389,7 +420,7 @@ static void start(Gm *s, u8 channel, u8 note, u8 velocity, u8 secondary,
     if (i == 255) return;
     v = &s->voices[i];
     v->age = s->age; v->note = note; v->channel = channel; v->sample = sample;
-    v->active = v->held = 1; v->secondary = secondary; v->pitch_cents = cents;
+    v->active = v->held = 1; v->secondary = secondary; v->pitch_cents = cents; v->latched = 0;
     v->attenuation = (u8)clamp(base_level + 2 * attenuation(velocity), 0, 255);
     v->pan = pan; v->format = gm_rom(header+8);
     v->reverb = reverb; v->chorus = chorus;
@@ -442,13 +473,36 @@ static void note_on(Gm *s, u8 channel, u8 note, u8 velocity) {
     if (!s->enabled) return;
     ++s->age;
     if (s->channels[channel].drum) {
-        u16 offset = be16(drum_map(&s->channels[channel]) + note * 2u);
+        GmChannel preset = s->channels[channel];
+        u8 key = note, user = 255;
+        if (!s->xg_mode) {
+            if (preset.program >= 64 && preset.program <= 65 &&
+                (s->user_rows[preset.program - 64] & 0x600u) == 0x600u) {
+                user = (u8)(preset.program - 64);
+                preset.program = s->user_drums[user][9][note];
+                key = s->user_drums[user][10][note];
+            }
+            preset.bank_msb = 127;
+            if (preset.program == 50) {
+                // Approximate the GS Kick & Snare collection by MU50 kits
+                if (key < 37 || key > 85) return;
+                preset.program = key >= 79 ? 40 : key >= 73 ? 25 : 0;
+                key = key < 57 ? 36 : key >= 79 ? 38 : 40;
+            } else {
+                key = compatible_drum_note(key);
+                if (key == 255) return;
+            }
+        }
+        u16 offset = be16(drum_map(&preset) + key * 2u);
         u32 d;
         u8 i, group;
         if (offset >= 353u * 30u) return;
         d = DRUMS + offset;
         if (!gm_rom(d+10) || be16(d+16) != 65535u) return;
-        group = gm_rom(d+3);
+        group = user != 255 && (s->user_rows[user] & 4u) ?
+                s->user_drums[user][2][note] : gm_rom(d+3);
+        if (user != 255 && (s->user_rows[user] & 64u) &&
+            !(s->user_drums[user][6][note] & 16u)) return;
         for (i = 0; i < GM_VOICES; ++i)
             if (s->voices[i].note != 255 && s->voices[i].channel == channel &&
                 ((group && s->voices[i].choke == group) || (!gm_rom(d+8) && s->voices[i].note == note))) silence(s, i);
@@ -461,10 +515,25 @@ static void note_on(Gm *s, u8 channel, u8 note, u8 velocity) {
               (int)gm_rom(d+1)-64,
               2 * attenuation(gm_rom(d+2)), gm_rom(d+4) ? gm_rom(d+4) : 64,
               gm_rom(d+5), gm_rom(d+6));
+        for (i = 0; i < GM_VOICES; ++i) if (s->voices[i].active && s->voices[i].age == s->age) {
+            GmVoice *v = &s->voices[i];
+            v->choke = group;
+            if (user != 255) {
+                u16 rows = s->user_rows[user];
+                if (rows & 1u) v->pitch_cents += ((int)s->user_drums[user][0][note] - 60) * 100;
+                if (rows & 2u) v->attenuation = (u8)clamp(2 * attenuation(s->user_drums[user][1][note]) +
+                                                        2 * attenuation(velocity), 0, 255);
+                if (rows & 8u) v->pan = s->user_drums[user][3][note];
+                if (rows & 16u) v->reverb = s->user_drums[user][4][note];
+                if (rows & 32u) v->chorus = s->user_drums[user][5][note];
+                if (rows & 64u) v->note_off = s->user_drums[user][6][note] & 1u;
+                pitch(s, i); level(s, i);
+            }
+        }
         gm_note_trigger(channel, velocity);
         return;
     }
-    instrument = instrument_address(&s->channels[channel]);
+    instrument = instrument_address(s, &s->channels[channel]);
     for (element = 0; element < ((gm_rom(instrument+1) & 2u) ? 2 : 1); ++element) {
         static const u8 scaling[6] = {100,50,20,10,5,0};
         u32 e = instrument + 10u + element * 80u, sample;
@@ -508,6 +577,16 @@ static void control(Gm *s, u8 channel, u8 cc, u8 value) {
     case 10: c->pan = value; update(s, channel, 2); break;
     case 11: c->expression = value; update(s, channel, 2); break;
     case 64: c->sustain = value >= 64; if (!c->sustain) pedal_up(s, channel); break;
+    case 66:
+        if (value >= 64 && !c->sostenuto) {
+            u8 i;
+            for (i = 0; i < GM_VOICES; ++i)
+                if (s->voices[i].channel == channel) s->voices[i].latched = s->voices[i].held;
+        }
+        c->sostenuto = value >= 64;
+        if (!c->sostenuto) pedal_up(s, channel);
+        break;
+    case 67: c->soft = value >= 64; update(s, channel, 2); break;
     case 91: c->reverb = value; update(s, channel, 2); break;
     case 93: c->chorus = value; update(s, channel, 2); break;
     case 100: c->rpn_lsb = value; break;
@@ -524,8 +603,41 @@ static void control(Gm *s, u8 channel, u8 cc, u8 value) {
 void gm_control(Gm *s, u8 channel, u8 controller, u8 value) {
     if (channel < 16 && value < 128) control(s, channel, controller, value);
 }
+static void gs_parameters(Gm *s) {
+    const u8 *b = s->sysex;
+    u8 n = (u8)(s->sysex_length - 1u), i, sum = 0;
+    if (n < 9 || n > sizeof s->sysex || b[0] != 0x41 || b[1] > 0x1f ||
+        b[2] != 0x42 || b[3] != 0x12) return;
+    for (i = 4; i < n; ++i) sum = (u8)(sum + b[i]);
+    if (sum & 127u) return;
+    if (n == 9 && ((b[4] == 0x40 && b[5] == 0 && b[6] == 0x7f && b[7] == 0) ||
+                   (b[4] == 0 && b[5] == 0 && b[6] == 0x7f && b[7] == 1))) {
+        u16 rows0 = s->user_rows[0], rows1 = s->user_rows[1];
+        reset(s, 0);
+        // User kits survive a GS reset, like the Sound Canvas user memory
+        s->user_rows[0] = rows0; s->user_rows[1] = rows1;
+        return;
+    }
+    if (s->xg_mode) return;
+    if (n == 9 && b[4] == 0x40 && (b[5] & 0xf0u) == 0x10 && b[6] == 0x15 && b[7] <= 2) {
+        // GS block zero is channel 10, blocks 1..9 are channels 1..9
+        u8 block = b[5] & 15u, channel = block == 0 ? 9 : block <= 9 ? (u8)(block - 1) : block;
+        all_sound_off(s, channel);
+        s->channels[channel].drum = b[7] != 0;
+    } else if (n == 9 && b[4] == 0x40 && b[5] == 0 && b[6] == 4) {
+        s->master = b[7];
+        for (i = 0; i < 16; ++i) update(s, i, 2);
+    } else if (n == 136 && b[4] == 0x29 && b[5] < 0x20 && b[6] == 0 && (b[5] & 15u) < 11) {
+        // Accept a complete SC-88 user-drum row only after its checksum passes
+        u8 set = b[5] >> 4, row = b[5] & 15u;
+        for (i = 0; i < 128; ++i) s->user_drums[set][row][i] = b[7u + i];
+        s->user_rows[set] |= (u16)(1u << row);
+    }
+}
 static void sysex(Gm *s) {
     const u8 *b = s->sysex;
+    if (s->sysex_length > sizeof s->sysex + 1u) return;
+    if (s->sysex_length < 5) return;
     /* Yamaha XG parameter change: System On, and per-part receive mode. */
     /* XG parameter changes contain seven bytes between F0 and F7. Since
      * sysex_length includes the initial F0 marker, their completed length is
@@ -537,22 +649,26 @@ static void sysex(Gm *s) {
             s->channels[b[4]].drum = b[6] != 0;
         return;
     }
-    /* Roland GS Reset selects the GM-compatible operating mode. This is the
-     * sole supported GS message; GS effect and parameter messages stay ignored. */
-    if (s->sysex_length == 10 && b[0] == 0x41 && b[1] <= 0x1fu &&
-        b[2] == 0x42 && b[3] == 0x12 && b[4] == 0x40 && b[5] == 0 &&
-        b[6] == 0x7f && b[7] == 0 && b[8] == 0x41) {
-        reset(s, 0);
-        return;
-    }
+    if (b[0] == 0x41) { gs_parameters(s); return; }
     if (b[1] != 0x7f && b[1] != 0) return; /* device 0 or broadcast */
     if (s->sysex_length == 5 && b[0] == 0x7e && b[2] == 9) {
         if (b[3] == 1) gm_reset(s);
         else if (b[3] == 2) { stop(s); s->enabled = 0; }
+        else if (b[3] == 3) {
+            u8 i;
+            reset(s, 0);
+            for (i = 0; i < 16; ++i) s->channels[i].bank_msb = i == 9 ? 120 : 121;
+        }
     } else if (s->sysex_length == 7 && b[0] == 0x7f && b[2] == 4 && b[3] == 1) {
         u8 i;
         s->master = b[5];
         for (i = 0; i < 16; ++i) update(s, i, 2);
+    } else if (s->sysex_length == 7 && b[0] == 0x7f && b[2] == 4 &&
+               (b[3] == 3 || b[3] == 4)) {
+        u8 i;
+        if (b[3] == 3) s->master_fine = (u16)((u16)b[5] << 7 | b[4]);
+        else s->master_coarse = b[5];
+        for (i = 0; i < 16; ++i) update(s, i, 1);
     }
 }
 void gm_byte(Gm *s, u8 byte) {
@@ -583,8 +699,9 @@ void gm_byte(Gm *s, u8 byte) {
     if (kind == 0xc0) {
         GmChannel *c = &s->channels[channel];
         c->program = byte;
-        c->drum = (!s->xg_mode && channel == 9) ||
-                  c->bank_msb == 126 || c->bank_msb == 127;
+        if (s->xg_mode) c->drum = c->bank_msb == 126 || c->bank_msb == 127;
+        else if (c->bank_msb == 120 || c->bank_msb == 121)
+            c->drum = c->bank_msb == 120;
         gm_program_changed(channel);
         return;
     }

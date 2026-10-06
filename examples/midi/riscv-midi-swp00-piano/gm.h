@@ -7,7 +7,7 @@ typedef unsigned int u32;
 #define GM_VOICES 32u
 typedef struct {
     u8 program, bank_msb, bank_lsb, drum, volume, expression, pan, modulation, pressure, sustain;
-    u8 reverb, chorus;
+    u8 reverb, chorus, sostenuto, soft;
     u8 rpn_msb, rpn_lsb, bend_semitones, bend_cents, coarse;
     u16 bend, fine;
 } GmChannel;
@@ -17,14 +17,18 @@ typedef struct {
     u32 sample;
     u8 note, channel, active, held, secondary, attenuation, pan, lfo;
     u8 reverb, chorus;
-    u8 release_rate, decay2_rate, decay2_level, stage, choke, note_off, format;
+    u8 release_rate, decay2_rate, decay2_level, stage, choke, note_off, format, latched;
 } GmVoice;
 typedef struct {
     GmChannel channels[16];
     GmVoice voices[GM_VOICES];
     u32 age;
-    u8 running, first, have_first, sysex_length, sysex[9];
+    u8 running, first, have_first, sysex_length, sysex[136];
     u8 enabled, transport, master, poll_voice, xg_mode;
+    u8 master_coarse;
+    u16 master_fine;
+    u16 user_rows[2];
+    u8 user_drums[2][11][128];
 } Gm;
 
 u8 gm_rom(u32 address);

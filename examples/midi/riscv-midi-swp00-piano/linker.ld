@@ -5,6 +5,6 @@ SECTIONS
   . = 0;
   .text : { *(.text.start) *(.text*) }
   .rodata : { *(.rodata*) *(.srodata*) }
-  ASSERT(. <= 0x4000, "Firmware overlaps Work RAM")
+  ASSERT(. <= 0x8000, "Firmware overlaps Work RAM")
   /DISCARD/ : { *(.comment) *(.riscv.attributes) *(.note*) }
 }

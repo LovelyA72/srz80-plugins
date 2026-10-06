@@ -10,7 +10,7 @@
 #define LCD_COMMAND (*(volatile u8 *)0x10001200u)
 #define LCD_DATA (*(volatile u8 *)0x10001201u)
 #define MU50_ROM ((volatile u8 *)0x20000000u)
-#define STATE ((State *)0x4000u)
+#define STATE ((State *)0x8000u)
 
 typedef struct { Gm gm; u16 pending; u8 digits, command, meter[16]; u32 meter_ticks; } State;
 _Static_assert(sizeof(State) < 0x3000, "leave at least 4 KiB for the RV32I stack");
@@ -111,7 +111,7 @@ __attribute__((noreturn, noinline, used)) void firmware_main(void) {
     gm_reset(&STATE->gm);
     lcd_define_bars();
     lcd_refresh(&STATE->gm, STATE->meter);
-    puts_uart("SRZ80 GM1 receiver; drums on channel 10\r\nChannel 1: program 0-127; R0-R127 reverb; C0-C127 chorus; w/s program\r\n> ");
+    puts_uart("SRZ80 GM receiver\r\nChannel 1: program 0-127; R0-R127 reverb; C0-C127 chorus; w/s program\r\n> ");
     MIDI_CONTROL = 2;
     for (;;) {
         if (MIDI_STATUS & 1u) gm_byte(&STATE->gm, MIDI_DATA);
@@ -121,5 +121,5 @@ __attribute__((noreturn, noinline, used)) void firmware_main(void) {
     }
 }
 __attribute__((naked, section(".text.start"), noreturn)) void _start(void) {
-    __asm__ volatile("li sp, 0x8000\n tail firmware_main\n");
+    __asm__ volatile("li sp, 0xc000\n tail firmware_main\n");
 }
