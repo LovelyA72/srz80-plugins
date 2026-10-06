@@ -1,6 +1,19 @@
 {
   "audio": {
-    "gain_db": 7.9
+    "compressor": {
+      "attack_ms": 10.0,
+      "downward_ratio": 4.0,
+      "downward_threshold_db": -12.0,
+      "enabled": true,
+      "knee_db": 6.0,
+      "makeup_db": 6.0,
+      "max_boost_db": 12.0,
+      "release_ms": 100.0,
+      "upward_ratio": 2.0,
+      "upward_threshold_db": -40.0
+    },
+    "gain_db": 8.6,
+    "software_clipping": true
   },
   "cards": [
     {
