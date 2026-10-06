@@ -509,10 +509,8 @@ SrhStatus SRH_CALL tick(void *p,uint32_t visible) {
 SrhStatus SRH_CALL state_get(void *p,char *out,uint64_t *size) {
     if(!size) return SRH_INVALID;
     auto &tool=*static_cast<Tool *>(p);
-    // The routed card is saved next to the file path. An empty endpoint means
-    // that nothing was selected when the project was saved, so loading the
-    // project must not invent a selection.
-    Json state{{"schema",1},{"path",tool.file_path},{"endpoint",tool.endpoint}};
+    // An empty endpoint keeps the project from inventing a card selection
+    Json state{{"schema",1},{"endpoint",tool.endpoint}};
     const auto text=state.dump();
     auto capacity=*size; *size=text.size()+1;
     if(!out) return SRH_OK;
@@ -526,22 +524,18 @@ SrhStatus SRH_CALL state_load(void *p,const char *state) {
         // Without that it is settled by the cards discovered on the rack.
         tool.endpoint_preference.clear();
         tool.preference_settled=false;
-        std::string path;
         if(state && *state) {
-            // Projects saved before the card was persisted hold a plain path.
             uint32_t schema=0; Json root;
             if(*state=='{') {
                 root=Json::parse(state,state+std::strlen(state),nullptr,false);
                 if(!root.is_discarded()) schema=root.value("schema",0u);
             }
             if(schema==1) {
-                path=root.value("path",std::string());
                 tool.endpoint_preference=root.value("endpoint",std::string());
                 tool.preference_settled=true;
-            } else path=state;
+            }
         }
         tool.host->runtime_info(tool.host->context,&tool.runtime);
-        if(!path.empty()) tool.load_file(path);
         return SRH_OK;
     });
 }

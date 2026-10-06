@@ -10,39 +10,9 @@
 static u16 be16(u32 address) {
     return (u16)((u16)gm_rom(address) << 8 | gm_rom(address + 1u));
 }
-/* Preserve RV32I compatibility while allowing the RV32IM image to use M. */
-static u32 mul(u32 a, u32 b) {
-#if defined(__riscv_mul)
-    return a * b;
-#else
-    u32 value = 0;
-    while (b) { if (b & 1u) value += a; a <<= 1; b >>= 1; }
-    return value;
-#endif
-}
-static u32 divide(u32 value, u32 divisor) {
-#if defined(__riscv_div)
-    return value / divisor;
-#else
-    u32 bit = 1, result = 0;
-    if (divisor == 1) return value;
-    if (divisor == 8192) return value >> 13;
-    while (divisor <= (value >> 1)) { divisor <<= 1; bit <<= 1; }
-    while (bit) {
-        if (value >= divisor) { value -= divisor; result |= bit; }
-        divisor >>= 1; bit >>= 1;
-    }
-    return result;
-#endif
-}
-static int scale(int value, u32 factor, u32 divisor) {
-    u32 magnitude = value < 0 ? (u32)-value : (u32)value;
-    int result = (int)divide(mul(magnitude, factor), divisor);
-    return value < 0 ? -result : result;
-}
-static int clamp(int value, int low, int high) {
-    return value < low ? low : value > high ? high : value;
-}
+#include "../midi_receiver/math.h"
+
+static void note_off(Gm *s, u8 channel, u8 note);
 
 /* MIDI volume/expression use a squared gain curve, converted to the chip's
  * 0.375 dB attenuation steps. Zero additionally selects the chip's mute pan. */
@@ -66,40 +36,11 @@ static void silence(Gm *s, u8 i) {
     release(s, i);
     s->voices[i].note = 255;
 }
-static void all_sound_off(Gm *s, u8 channel) {
-    u8 i;
-    for (i = 0; i < GM_VOICES; ++i)
-        if (s->voices[i].note != 255 && s->voices[i].channel == channel) silence(s, i);
-}
-static void stop(Gm *s) {
-    u8 i;
-    for (i = 0; i < GM_VOICES; ++i) silence(s, i);
-    for (i = 0; i < 16; ++i) s->channels[i].sustain = 0;
-    s->transport = 0;
-}
-static void controllers(GmChannel *c) {
-    c->expression = 127; c->modulation = c->pressure = c->sustain = 0;
-    c->bend = 8192; c->rpn_msb = c->rpn_lsb = 127;
-}
-void gm_reset(Gm *s) {
-    u8 i;
-    stop(s);
-    for (i = 0; i < 16; ++i) {
-        GmChannel *c = &s->channels[i];
-        controllers(c);
-        c->program = 0; c->volume = 100; c->pan = 64;
-        c->bend_semitones = 2; c->bend_cents = 0; c->fine = 8192; c->coarse = 64;
-    }
-    s->age = 0; s->running = s->have_first = s->sysex_length = 0;
-    s->enabled = 1; s->master = 127;
-}
-static int channel_pitch(const GmChannel *c) {
-    return scale((int)c->bend - 8192, c->bend_semitones * 100u + c->bend_cents, 8192) +
-           scale((int)c->fine - 8192, 100, 8192) + ((int)c->coarse - 64) * 100;
-}
 static void pitch(Gm *s, u8 i) {
     GmVoice *v = &s->voices[i];
-    int cents = v->pitch_cents + channel_pitch(&s->channels[v->channel]);
+    int cents = v->pitch_cents + channel_pitch(&s->channels[v->channel]) +
+                scale((int)s->master_fine - 8192, 100, 8192) +
+                ((int)s->master_coarse - 64) * 100;
     int octave = 1;
     u16 fnum;
     /* Encode only the hardware's actual range: nibble 8 means +7, not -9. */
@@ -113,7 +54,8 @@ static void pitch(Gm *s, u8 i) {
 static void level(Gm *s, u8 i) {
     GmVoice *v = &s->voices[i];
     GmChannel *c = &s->channels[v->channel];
-    int amount = v->attenuation + attenuation[c->volume] + attenuation[c->expression] + attenuation[s->master];
+    int amount = v->attenuation + (c->soft ? 16 : 0) + attenuation[c->volume] +
+                 attenuation[c->expression] + attenuation[s->master];
     int pan = (int)c->pan - 64;
     int base_pan = v->pan >= 9 ? (int)v->pan - 16 : v->pan;
     pan = clamp(scale(pan, 7, pan < 0 ? 64 : 63) + base_pan, -7, 7);
@@ -134,41 +76,6 @@ static void update(Gm *s, u8 channel, u8 what) {
         if (what & 1u) pitch(s, i);
         if (what & 2u) level(s, i);
         if (what & 4u) modulation(s, i);
-    }
-}
-static void pedal_up(Gm *s, u8 channel) {
-    u8 i;
-    for (i = 0; i < GM_VOICES; ++i)
-        if (s->voices[i].active && !s->voices[i].held && s->voices[i].channel == channel) release(s, i);
-}
-static void notes_off(Gm *s, u8 channel) {
-    u8 i;
-    for (i = 0; i < GM_VOICES; ++i) if (s->voices[i].note != 255 && s->voices[i].channel == channel) {
-        s->voices[i].held = 0;
-        if (!s->channels[channel].sustain && s->voices[i].active) release(s, i);
-    }
-}
-static void note_off(Gm *s, u8 channel, u8 note) {
-    u8 i, oldest = 255;
-    for (i = 0; i < GM_VOICES; ++i) {
-        GmVoice *v = &s->voices[i];
-        if (v->active && v->held && v->channel == channel && v->note == note &&
-            (oldest == 255 || s->age - v->age > s->age - s->voices[oldest].age)) oldest = i;
-    }
-    if (channel == 9) {
-        /* Percussion is one-shot: keep the hardware sounding, but free the
-         * software slot once its MIDI note has ended. */
-        if (oldest != 255) {
-            s->voices[oldest].active = s->voices[oldest].held = 0;
-        }
-        return;
-    }
-    if (oldest != 255) {
-        u32 age = s->voices[oldest].age;
-        for (i = 0; i < GM_VOICES; ++i) if (s->voices[i].active && s->voices[i].age == age) {
-            s->voices[i].held = 0;
-            if (!s->channels[channel].sustain) release(s, i);
-        }
     }
 }
 /* True when candidate was activated before current; current 255 means never. */
@@ -215,7 +122,7 @@ static void start(Gm *s, u8 channel, u8 note, u8 velocity, u8 secondary,
     if (i == 255) return;
     v = &s->voices[i];
     v->age = s->age; v->note = note; v->channel = channel; v->sample = sample;
-    v->active = v->held = 1; v->secondary = secondary; v->pitch_cents = cents;
+    v->active = v->held = 1; v->latched = 0; v->secondary = secondary; v->pitch_cents = cents;
     v->attenuation = (u8)clamp(attenuation_value + ((127 - velocity) >> 1), 0, 127);
     v->pan = pan & 15u;
     /* Header LFO is a sample default; controller changes must not erase it. */
@@ -276,82 +183,6 @@ static void note_on(Gm *s, u8 channel, u8 note, u8 velocity) {
     }
 }
 
-static void data_entry(Gm *s, u8 channel, u8 cc, u8 value) {
-    GmChannel *c = &s->channels[channel];
-    if (c->rpn_msb) return;
-    if (c->rpn_lsb == 0) {
-        if (cc == 6) c->bend_semitones = value;
-        else c->bend_cents = (u8)clamp(value, 0, 99);
-    } else if (c->rpn_lsb == 1) {
-        if (cc == 6) c->fine = (u16)((c->fine & 127u) | (u16)value << 7);
-        else c->fine = (u16)((c->fine & 16256u) | value);
-    } else if (c->rpn_lsb == 2 && cc == 6) c->coarse = value;
-    update(s, channel, 1);
-}
-static void control(Gm *s, u8 channel, u8 cc, u8 value) {
-    GmChannel *c = &s->channels[channel];
-    switch (cc) {
-    case 1: c->modulation = value; update(s, channel, 4); break;
-    case 7: c->volume = value; update(s, channel, 2); break;
-    case 10: c->pan = value; update(s, channel, 2); break;
-    case 11: c->expression = value; update(s, channel, 2); break;
-    case 64: c->sustain = value >= 64; if (!c->sustain) pedal_up(s, channel); break;
-    case 100: c->rpn_lsb = value; break;
-    case 101: c->rpn_msb = value; break;
-    case 98: case 99: c->rpn_msb = c->rpn_lsb = 127; break;
-    case 6: case 38: data_entry(s, channel, cc, value); break;
-    case 120: all_sound_off(s, channel); break;
-    case 121: controllers(c); pedal_up(s, channel); update(s, channel, 7); break;
-    case 123: case 124: case 125: case 126: case 127: notes_off(s, channel); break;
-    default: break; /* GM1 ignores bank selection and unsupported controllers. */
-    }
-}
-static void sysex(Gm *s) {
-    const u8 *b = s->sysex;
-    if (b[1] != 0x7f && b[1] != 0) return; /* device 0 or broadcast */
-    if (s->sysex_length == 5 && b[0] == 0x7e && b[2] == 9) {
-        if (b[3] == 1) gm_reset(s);
-        else if (b[3] == 2) { stop(s); s->enabled = 0; }
-    } else if (s->sysex_length == 7 && b[0] == 0x7f && b[2] == 4 && b[3] == 1) {
-        u8 i;
-        s->master = b[5];
-        for (i = 0; i < 16; ++i) update(s, i, 2);
-    }
-}
-void gm_byte(Gm *s, u8 byte) {
-    u8 kind, channel;
-    if (byte >= 0xf8) {
-        if (byte == 0xff) gm_reset(s);
-        else if (byte == 0xfc) stop(s);
-        else if (byte == 0xfa) { stop(s); s->transport = 1; }
-        else if (byte == 0xfb) s->transport = 1;
-        return; /* Real-time bytes do not interrupt running status or SysEx. */
-    }
-    if (s->sysex_length) {
-        if (byte == 0xf7) { sysex(s); s->sysex_length = 0; return; }
-        if (byte < 128) {
-            if (s->sysex_length <= sizeof s->sysex) s->sysex[s->sysex_length - 1] = byte;
-            if (s->sysex_length < 255) ++s->sysex_length;
-            return;
-        }
-        s->sysex_length = 0;
-    }
-    if (byte & 128) {
-        s->have_first = 0; s->running = byte < 0xf0 ? byte : 0;
-        if (byte == 0xf0) s->sysex_length = 1;
-        return;
-    }
-    if (!s->running) return;
-    kind = s->running & 0xf0; channel = s->running & 15;
-    if (kind == 0xc0) { s->channels[channel].program = byte; return; }
-    if (kind == 0xd0) { s->channels[channel].pressure = byte; update(s, channel, 4); return; }
-    if (!s->have_first) { s->first = byte; s->have_first = 1; return; }
-    s->have_first = 0;
-    if (kind == 0x90) note_on(s, channel, s->first, byte);
-    else if (kind == 0x80) note_off(s, channel, s->first);
-    else if (kind == 0xb0) control(s, channel, s->first, byte);
-    else if (kind == 0xe0) {
-        s->channels[channel].bend = (u16)((u16)byte << 7 | s->first);
-        update(s, channel, 1);
-    }
-}
+#define GM_PROGRAM_CHANGE 1
+#define GM_PERCUSSION_ONESHOT 1
+#include "../midi_receiver/receiver.h"

@@ -10,6 +10,7 @@
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
+#include "../midi_receiver/channel.h"
 
 /* This is a bare-metal program: there is no operating system or device
  * driver. The project maps each card directly into the RV32I address space.
@@ -17,7 +18,7 @@ typedef unsigned int u32;
  * must become a real bus transaction; the compiler must not cache or remove it.
  *
  *   0x00000000  ROM containing this program and its constant tables
- *   0x00004000  RAM used for SynthState (the stack grows down from 0x8000)
+ *   0x00004000  RAM used for Gm (the stack grows down from 0x8000)
  *   0x10000000  YMF262 #1's four address/data ports
  *   0x10000100  YMF262 #2's four address/data ports
  *   0x10000200  YMF262 #3's four address/data ports
@@ -31,7 +32,7 @@ typedef unsigned int u32;
 #define MIDI_DATA (*(volatile u8 *)0x10000400u)
 #define MIDI_STATUS (*(volatile u8 *)0x10000401u)
 #define MIDI_CONTROL (*(volatile u8 *)0x10000402u)
-#define STATE ((volatile SynthState *)0x4000u)
+#define STATE ((Gm *)0x4000u)
 #define VOICE_COUNT (OPL_COUNT * VOICES_PER_OPL)
 #define MIDI_RX_READY 0x01u
 #define MIDI_RX_ENABLE 0x02u
@@ -73,25 +74,23 @@ static const u16 f_numbers[12] = {
 };
 
 typedef struct {
-    /* A note value of 0xff marks a free OPL voice. MIDI channel and sustain
-     * state let a later Note Off find the correct voice even though MIDI
-     * channels and OPL channels are allocated independently.
-     */
-    u8 note[VOICE_COUNT];
-    u8 channel[VOICE_COUNT];
-    u8 sustained[VOICE_COUNT];
-    u8 sustain[16];
-    u32 age[VOICE_COUNT];
-    u32 next_age;
+    u32 age;
+    u8 note, channel, active, held, latched, attenuation;
+} GmVoice;
+typedef struct {
+    GmChannel channels[16];
+    GmVoice voices[VOICE_COUNT];
+    u32 age;
+    u8 running, first, have_first, sysex_length, sysex[8];
+    u8 enabled, transport, master, master_coarse;
+    u16 master_fine;
+} Gm;
+#define GM_VOICES VOICE_COUNT
+_Static_assert(sizeof(Gm) < 0x3000, "leave at least 4 KiB for the RV32I stack");
 
-    /* MIDI running status permits a stream to omit repeated status bytes.
-     * The parser therefore remembers both the last channel status and the
-     * first data byte of the message currently being assembled.
-     */
-    u8 running_status;
-    u8 first_data;
-    u8 data_count;
-} SynthState;
+#include "../midi_receiver/math.h"
+static void note_off(Gm *s, u8 channel, u8 note);
+void gm_reset(Gm *s);
 
 static void opl_write(u8 chip, u16 reg, u8 value) {
     /* Registers 000-0ff use ports 0/1; registers 100-1ff use ports 2/3.
@@ -119,16 +118,21 @@ static u8 local_channel(u8 voice) {
 }
 static u16 voice_bank(u8 voice) { return local_voice(voice) >= 9u ? 0x100u : 0u; }
 
-static void key_off(u8 voice) {
-    /* B0 bit 5 is KEY-ON. Writing zero releases the operators, then 0xff makes
-     * the software voice immediately available for another MIDI note.
-     */
-    u16 base = voice_bank(voice);
-    opl_write(voice_chip(voice), (u16)(base + 0xb0u + local_channel(voice)), 0);
-    STATE->note[voice] = 0xffu;
-    STATE->sustained[voice] = 0;
+static void release(Gm *s, u8 voice) {
+    opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xb0u + local_channel(voice)), 0);
+    s->voices[voice].active = s->voices[voice].held = 0;
 }
-
+static void silence(Gm *s, u8 voice) {
+    u16 base = voice_bank(voice);
+    u8 modulator = operator_offsets[local_channel(voice)];
+    // Disconnect stereo output so All Sound Off also kills release tails
+    opl_write(voice_chip(voice), (u16)(base + 0x40u + modulator), 63);
+    opl_write(voice_chip(voice), (u16)(base + 0x43u + modulator), 63);
+    opl_write(voice_chip(voice), (u16)(base + 0xc0u + local_channel(voice)),
+              (u8)(piano_instrument[10] & 0xcfu));
+    release(s, voice);
+    s->voices[voice].note = 255;
+}
 static void note_frequency(u8 note, u16 *f_number, u8 *block) {
     /* Convert MIDI's linear note number into semitone-within-octave and octave
      * using subtraction instead of `% 12`, which could require an RV32M divide
@@ -152,31 +156,16 @@ static void note_frequency(u8 note, u16 *f_number, u8 *block) {
     *f_number = value;
 }
 
-static u8 allocate_voice(void) {
-    u8 voice;
-    u8 lowest = 0;
-    u8 oldest = 0xffu;
-    u32 oldest_age = 0xffffffffu;
-    /* Prefer a genuinely free voice; this avoids cutting off a sounding note. */
+static u8 allocate_voice(Gm *s) {
+    u8 voice, lowest = 0, oldest = 255;
     for (voice = 0; voice < VOICE_COUNT; ++voice)
-        if (STATE->note[voice] == 0xffu)
-            return voice;
-    /* All voices are busy. First identify the lowest pitch to protect. If
-     * several voices share it, protecting one is enough to retain the bass.
-     */
+        if (!s->voices[voice].active) return voice;
     for (voice = 1; voice < VOICE_COUNT; ++voice)
-        if (STATE->note[voice] < STATE->note[lowest])
-            lowest = voice;
-    /* Among every other voice, the smallest monotonically assigned age is the
-     * earliest note. Release that voice before reusing its OPL channel.
-     */
-    for (voice = 0; voice < VOICE_COUNT; ++voice) {
-        if (voice != lowest && STATE->age[voice] < oldest_age) {
-            oldest = voice;
-            oldest_age = STATE->age[voice];
-        }
-    }
-    key_off(oldest);
+        if (s->voices[voice].note < s->voices[lowest].note) lowest = voice;
+    for (voice = 0; voice < VOICE_COUNT; ++voice)
+        if (voice != lowest && (oldest == 255 ||
+            s->age - s->voices[voice].age > s->age - s->voices[oldest].age)) oldest = voice;
+    release(s, oldest);
     return oldest;
 }
 
@@ -207,138 +196,82 @@ static void program_voice(u8 voice, u8 velocity) {
     opl_write(voice_chip(voice), (u16)(base + 0xc0u + local_channel(voice)), piano_instrument[10]);
 }
 
-static void note_on(u8 channel, u8 note, u8 velocity) {
-    u8 voice;
-    u16 f_number;
-    u8 block;
-    if (channel == 9u || note >= 128u || velocity == 0u)
-        return;
-    /* MIDI channels select message ownership, not fixed OPL voices. A fresh
-     * note obtains whichever hardware voice is free (or selected for theft).
-     */
-    voice = allocate_voice();
-    program_voice(voice, velocity);
-    note_frequency(note, &f_number, &block);
-    STATE->channel[voice] = channel;
-    STATE->note[voice] = note;
-    STATE->sustained[voice] = 0;
-    STATE->age[voice] = ++STATE->next_age;
-    /* A0 holds FNUM bits 7:0. B0 holds FNUM bits 9:8, block in bits 4:2,
-     * and KEY-ON in bit 5. Writing B0 last starts the note at the new pitch.
-     */
-    opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xa0u + local_channel(voice)), (u8)f_number);
+// MIDI gain uses the existing velocity level and keeps CC 7's default unchanged
+static const u8 gain_attenuation[128] = {
+    63,63,63,63,63,63,63,63,63,61,59,57,55,53,51,49,
+    48,47,45,44,43,42,41,40,39,38,37,36,35,34,33,33,
+    32,31,31,30,29,29,28,27,27,26,26,25,25,24,24,23,
+    23,22,22,21,21,20,20,19,19,19,18,18,17,17,17,16,
+    16,16,15,15,14,14,14,13,13,13,13,12,12,12,11,11,
+    11,10,10,10,10,9,9,9,8,8,8,8,7,7,7,7,
+    6,6,6,6,6,5,5,5,5,4,4,4,4,4,3,3,
+    3,3,3,2,2,2,2,2,1,1,1,1,1,0,0,0,
+};
+static void pitch(Gm *s, u8 voice) {
+    GmVoice *v = &s->voices[voice];
+    int cents = clamp((int)v->note * 100 + channel_pitch(&s->channels[v->channel]) +
+                      scale((int)s->master_fine - 8192, 100, 8192) +
+                      ((int)s->master_coarse - 64) * 100, 0, 12799);
+    u8 note = (u8)divide((u32)cents, 100), semitone = note, block;
+    u16 fnum, next;
+    while (semitone >= 12) semitone -= 12;
+    note_frequency(note, &fnum, &block);
+    next = semitone == 11 ? (u16)(f_numbers[0] << 1) : f_numbers[semitone + 1];
+    if (note < 12) next = (u16)((next + 1u) >> 1);
+    fnum = (u16)(fnum + scale((int)next - fnum, (u32)(cents - note * 100), 100));
+    opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xa0u + local_channel(voice)), (u8)fnum);
     opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xb0u + local_channel(voice)),
-              (u8)((f_number >> 8) | (block << 2) | 0x20u));
+              (u8)((fnum >> 8) | (block << 2) | (v->active ? 0x20u : 0u)));
 }
-
-static void note_off(u8 channel, u8 note) {
+static void level(Gm *s, u8 voice) {
+    GmVoice *v = &s->voices[voice];
+    GmChannel *c = &s->channels[v->channel];
+    u16 base = voice_bank(voice);
+    u8 carrier = (u8)(operator_offsets[local_channel(voice)] + 3u);
+    int amount = v->attenuation + (int)gain_attenuation[c->volume] - gain_attenuation[100] +
+                 gain_attenuation[c->expression] + gain_attenuation[s->master] + (c->soft ? 8 : 0);
+    u8 stereo = c->pan < 32 ? 0x10 : c->pan > 95 ? 0x20 : 0x30;
+    if (!c->volume || !c->expression || !s->master) { amount = 63; stereo = 0; }
+    opl_write(voice_chip(voice), (u16)(base + 0x40u + carrier), (u8)clamp(amount, 0, 63));
+    opl_write(voice_chip(voice), (u16)(base + 0xc0u + local_channel(voice)),
+              (u8)((piano_instrument[10] & 0xcfu) | (piano_instrument[10] & stereo)));
+}
+static void modulation(Gm *s, u8 voice) {
+    GmChannel *c = &s->channels[s->voices[voice].channel];
+    u16 base = voice_bank(voice);
+    u8 modulator = operator_offsets[local_channel(voice)];
+    u8 vibrato = c->modulation || c->pressure ? 0x40 : 0;
+    opl_write(voice_chip(voice), (u16)(base + 0x20u + modulator), (u8)(piano_instrument[0] | vibrato));
+    opl_write(voice_chip(voice), (u16)(base + 0x23u + modulator), (u8)(piano_instrument[5] | vibrato));
+}
+static void update(Gm *s, u8 channel, u8 what) {
+    u8 i;
+    for (i = 0; i < VOICE_COUNT; ++i) if (s->voices[i].note != 255 && s->voices[i].channel == channel) {
+        if (what & 1u) pitch(s, i);
+        if (what & 2u) level(s, i);
+        if (what & 4u) modulation(s, i);
+    }
+}
+static void note_on(Gm *s, u8 channel, u8 note, u8 velocity) {
     u8 voice;
-    if (channel == 9u)
-        return;
-    for (voice = 0; voice < VOICE_COUNT; ++voice) {
-        if (STATE->note[voice] == note && STATE->channel[voice] == channel) {
-            /* With the pedal down, remember the release but leave KEY-ON set.
-             * Releasing CC 64 later turns off every such deferred voice.
-             */
-            if (STATE->sustain[channel])
-                STATE->sustained[voice] = 1;
-            else
-                key_off(voice);
-        }
-    }
+    GmVoice *v;
+    if (!velocity) { note_off(s, channel, note); return; }
+    if (!s->enabled || channel == 9) return;
+    voice = allocate_voice(s);
+    v = &s->voices[voice];
+    v->channel = channel; v->note = note; v->active = v->held = 1; v->latched = 0;
+    v->age = ++s->age; v->attenuation = (u8)((127u - velocity) >> 1);
+    program_voice(voice, velocity);
+    level(s, voice); modulation(s, voice); pitch(s, voice);
 }
 
-static void release_channel(u8 channel, u8 sustained_only) {
-    u8 voice;
-    for (voice = 0; voice < VOICE_COUNT; ++voice)
-        if (STATE->note[voice] != 0xffu && STATE->channel[voice] == channel &&
-            (!sustained_only || STATE->sustained[voice]))
-            key_off(voice);
-}
-
-static void control_change(u8 channel, u8 controller, u8 value) {
-    if (channel == 9u)
-        return;
-    /* This small example intentionally implements only controllers that affect
-     * note lifetime. Program, modulation, volume, and pan messages are parsed
-     * correctly but do not replace the single learner-editable piano patch.
-     */
-    if (controller == 64u) {
-        u8 was_on = STATE->sustain[channel];
-        STATE->sustain[channel] = value >= 64u;
-        if (was_on && !STATE->sustain[channel])
-            release_channel(channel, 1);
-    } else if (controller == 120u || controller == 123u) {
-        release_channel(channel, 0);
-    }
-}
-
-static void dispatch(u8 status, u8 first, u8 second) {
-    /* MIDI displays channels as 1-16, while the low status nibble is 0-15.
-     * Consequently nibble 9 is displayed channel 10, the ignored drum channel.
-     */
-    u8 kind = status & 0xf0u;
-    u8 channel = status & 0x0fu;
-    if (channel == 9u)
-        return;
-    if (kind == 0x80u || (kind == 0x90u && second == 0u))
-        note_off(channel, first);
-    else if (kind == 0x90u)
-        note_on(channel, first, second);
-    else if (kind == 0xb0u)
-        control_change(channel, first, second);
-}
-
-static void midi_byte(u8 value) {
-    u8 kind;
-    /* Real-time messages may appear between any two bytes and do not disturb
-     * running status. This piano has no clock/transport behavior, so skip them.
-     */
-    if (value >= 0xf8u)
-        return;
-    /* Bit 7 distinguishes a status byte from a data byte. System messages
-     * (f0-f7) cancel running status; their following data is ignored until the
-     * next channel status. Channel Voice messages retain their status.
-     */
-    if (value & 0x80u) {
-        STATE->data_count = 0;
-        STATE->running_status = value < 0xf0u ? value : 0;
-        return;
-    }
-    if (!STATE->running_status)
-        return;
-    kind = STATE->running_status & 0xf0u;
-    /* Program Change and Channel Pressure have one data byte. The other
-     * Channel Voice messages have two, so collect the first before dispatch.
-     */
-    if (STATE->data_count == 0) {
-        STATE->first_data = value;
-        if (kind == 0xc0u || kind == 0xd0u)
-            dispatch(STATE->running_status, value, 0);
-        else
-            STATE->data_count = 1;
-    } else {
-        dispatch(STATE->running_status, STATE->first_data, value);
-        STATE->data_count = 0;
-    }
-}
+#define GM_PROGRAM_CHANGE 0
+#define GM_PERCUSSION_ONESHOT 0
+#include "../midi_receiver/receiver.h"
 
 __attribute__((noreturn, noinline, used)) void firmware_main(void) {
     u8 voice;
-    /* RAM has just been cold-reset, but initialize every field explicitly so
-     * the sentinel values and hardware state are obvious and deterministic.
-     */
-    for (voice = 0; voice < VOICE_COUNT; ++voice) {
-        STATE->note[voice] = 0xffu;
-        STATE->age[voice] = 0;
-        opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xb0u + local_channel(voice)), 0);
-        opl_write(voice_chip(voice), (u16)(voice_bank(voice) + 0xc0u + local_channel(voice)), 0x30);
-    }
-    for (voice = 0; voice < 16u; ++voice)
-        STATE->sustain[voice] = 0;
-    STATE->next_age = 0;
-    STATE->running_status = 0;
-    STATE->data_count = 0;
+    gm_reset(STATE);
     /* Global YMF262 setup. The second register bank is usable only after NEW
      * mode is enabled. Keeping four-op and rhythm modes off yields 18 uniform
      * two-operator voices per chip, which makes allocation straightforward.
@@ -349,13 +282,13 @@ __attribute__((noreturn, noinline, used)) void firmware_main(void) {
         opl_write(voice, 0x0bd, 0x00); /* Disable rhythm mode. */
     }
     /* Enable MIDI receive, then poll STATUS bit 0. Reading DATA pops exactly
-     * one byte from the card FIFO. At 100 kHz this simple loop is comfortably
+     * one byte from the card FIFO. At 300 kHz this loop is comfortably
      * faster than a normal MIDI stream and needs no CPU interrupt support.
      */
     MIDI_CONTROL = MIDI_RX_ENABLE;
     for (;;)
         if (MIDI_STATUS & MIDI_RX_READY)
-            midi_byte(MIDI_DATA);
+            gm_byte(STATE, MIDI_DATA);
 }
 
 __attribute__((naked, section(".text.start"), noreturn)) void _start(void) {

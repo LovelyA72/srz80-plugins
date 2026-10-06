@@ -55,7 +55,7 @@
     {
       "base": "0x20000000",
       "image": "xr174c0.ic7",
-      "name": "MU50 v1.05 controller tables",
+      "name": "MU50 v1.05 controller ROM",
       "plugin": "rom",
       "priority": 10,
       "space": "rv.memory"
@@ -67,7 +67,6 @@
         "endpoint": "swp00-piano.uart",
         "transcript_capacity": 65536
       },
-      "name": "Instrument selector",
       "plugin": "uart_console",
       "priority": 0,
       "size": 2,
@@ -83,7 +82,6 @@
         "rx_enable": true,
         "tx_enable": false
       },
-      "name": "Piano MIDI input",
       "plugin": "midi",
       "priority": 0,
       "size": 4,
@@ -92,7 +90,6 @@
     {
       "base": "0x10001200",
       "clock": 0,
-      "name": "LCD1602",
       "plugin": "lcd1602",
       "priority": 0,
       "reset_vector": 0,
@@ -141,7 +138,7 @@
   "time_mode": "project",
   "tool_state": {
     "keyboard": "{\"endpoint\":\"\",\"schema\":1}",
-    "midi": "{\"endpoint\":\"swp00-piano.midi\",\"path\":\"\",\"schema\":1}",
+    "midi": "{\"endpoint\":\"swp00-piano.midi\",\"schema\":1}",
     "patch_bay": "{\"flips\":{},\"layouts\":{},\"pan\":[30.0,50.0],\"zoom\":1.0}",
     "z80_assembler": "{\"schema\":1,\"sources\":{}}"
   },
